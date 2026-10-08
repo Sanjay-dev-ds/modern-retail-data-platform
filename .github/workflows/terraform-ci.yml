@@ -1,0 +1,19 @@
+name: terraform-ci
+on:
+  pull_request:
+    paths: ["infra/terraform/**", "scripts/airflow/**"]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.5"
+      - name: fmt
+        run: terraform -chdir=infra/terraform fmt -check -recursive
+      - name: init
+        run: terraform -chdir=infra/terraform init -backend=false
+      - name: validate
+        run: terraform -chdir=infra/terraform validate

@@ -1,0 +1,14 @@
+region      = "us-east-1"
+environment = "dev"
+
+# Set false to remove the DMS replication instance when not replicating (saves cost)
+enable_dms = true
+
+# Platform host (Airflow + generators). t3.medium is ~$30/month while running.
+# ec2_instance_type = "t3.medium"
+# airflow_version   = "3.3.2"
+# repo_url          = "https://github.com/<you>/modern-retail-data-platform.git"
+
+# Budget alerts (empty disables)
+# alert_email        = "you@example.com"
+# monthly_budget_usd = 50

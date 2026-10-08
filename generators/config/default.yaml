@@ -1,0 +1,27 @@
+seed: 42
+
+scale:
+  stores: 50
+  registers_per_store: 4
+  skus: 5000
+  loyalty_members: 200000
+  history_days: 180
+  transactions_per_day: 20000
+
+# Fraction of records affected by each injected defect
+defects:
+  duplicate_events: 0.01
+  late_arriving: 0.02
+  null_values: 0.005
+  invalid_values: 0.005
+  orphan_sku: 0.003
+  schema_drift_day: null        # e.g. "2026-11-01" adds a column to the catalog file
+
+mutations:                      # share of new transactions later updated or deleted
+  void_rate: 0.01
+  return_rate: 0.02
+  delete_rate: 0.0005
+
+targets:
+  clickstream_events_per_second: 20
+  incremental_cycle_seconds: 30
