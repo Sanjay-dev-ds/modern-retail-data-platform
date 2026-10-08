@@ -20,6 +20,11 @@ mkdir -p /usr/local/lib/docker/cli-plugins
   curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose \
     https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64
 chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+# Compose builds images through buildx (>= 0.17), which the AL2023 docker package lacks.
+[[ -x /usr/local/lib/docker/cli-plugins/docker-buildx ]] ||
+  curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx \
+    https://github.com/docker/buildx/releases/download/v0.38.0/buildx-v0.38.0.linux-amd64
+chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
 command -v uv &>/dev/null ||
   curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh
 

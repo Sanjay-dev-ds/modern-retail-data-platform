@@ -10,6 +10,7 @@
 
 x-airflow-common: &airflow-common
   image: retail-airflow:${AIRFLOW_VERSION:-3.3.2}
+  pull_policy: build   # local image: build it, never try to pull it from Docker Hub
   build:
     context: .
     args:
