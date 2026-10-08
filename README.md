@@ -120,6 +120,22 @@ aws s3 ls "s3://$RAW_BUCKET/catalog/products/" --recursive | tail
 - **Reset before DMS:** `uv run retail-gen seed --force` truncates the POS tables and reloads them. Never do this after DMS has started, because DMS does not replicate `TRUNCATE`.
 - **Volumes and defect rates** are set in [`generators/config/default.yaml`](generators/config/default.yaml). The data contract is [`docs/source-contracts.md`](docs/source-contracts.md).
 
+## Connect to the POS database (DBeaver)
+
+RDS is private. Reach it through an SSM tunnel via the EC2 host, with full read/write access and no public endpoint. This needs the Session Manager plugin (`brew install --cask session-manager-plugin`).
+
+1. Open the tunnel and keep it running:
+   ```bash
+   make rds-tunnel
+   ```
+2. Print the connection details, including the password from Secrets Manager:
+   ```bash
+   make rds-credentials
+   ```
+3. In DBeaver: **New connection → PostgreSQL**, host `localhost`, port `15432`, database `retail`, user `retail_admin`, plus the password. On the **Driver properties** tab, set `sslmode` = `require`.
+
+Edits you make here are real source changes: DMS replicates them to S3 (CDC) and they reach Snowflake on the next `retail_elt` run. Hard deletes of a sale must remove `payments` and `transaction_lines` before `transactions` (foreign keys).
+
 ## Airflow on EC2
 
 | Task | Command (on the host, as root, in `/opt/retail/airflow`) |
