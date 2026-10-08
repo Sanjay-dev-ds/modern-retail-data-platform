@@ -144,6 +144,12 @@ RETAIL.CORE     dim_date, dim_store / dim_customer / dim_product (SCD2),
 RETAIL.MARTS    mart_daily_sales, mart_web_funnel
 ```
 
+**Surrogate keys (Kimball):**
+- `store_sk`, `customer_sk` and `product_sk` are meaningless sequential integers, assigned **once** when a dimension version is first inserted and never changed. The SCD2 dimensions are incremental merges ([`macros/surrogate_key.sql`](dbt/retail/macros/surrogate_key.sql)). A new version gets `max + 1`, and the previous version's `valid_to`/`is_current` are updated.
+- `-1` is the **Unknown** member. Fact keys are never null: orphan SKUs, anonymous shoppers and unmatched stores point at `-1`.
+- `date_sk` is a `YYYYMMDD` integer, the accepted smart-key exception for dates.
+- Never full-refresh a dimension on its own, because its keys would be re-assigned under facts that already hold them. Rebuild dimensions and facts together.
+
 The DAG is [`airflow/dags/retail_elt.py`](airflow/dags/retail_elt.py). The Airflow image ([`airflow/Dockerfile`](airflow/Dockerfile)) adds Cosmos and puts dbt-snowflake in its own venv. Snowflake access uses key-pair auth: Terraform generates the key and stores it in the `snowflake_default` Airflow connection in Secrets Manager.
 
 **One-time setup:**

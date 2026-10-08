@@ -1,4 +1,4 @@
--- Calendar from a date spine (no reference file needed).
+-- Calendar from a date spine (no reference file needed). date_sk = YYYYMMDD integer.
 with spine as (
     {{ dbt_utils.date_spine(
         datepart="day",
@@ -8,6 +8,7 @@ with spine as (
 )
 
 select
+    to_number(to_char(date_day, 'YYYYMMDD'))  as date_sk,      -- integer smart key, the accepted exception for dates
     date_day                                as date_day,
     year(date_day)                          as year,
     quarter(date_day)                       as quarter,

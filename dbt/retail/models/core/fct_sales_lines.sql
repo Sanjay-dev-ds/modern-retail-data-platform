@@ -60,11 +60,15 @@ joined as (
 
 select
     j.*,
-    -- Point-in-time dimension keys (the version valid at the time of the sale).
-    p.product_sk,
-    c.customer_sk,
-    s.store_sk
+    -- Point-in-time dimension keys (the version valid at the time of the sale). Never null:
+    -- -1 = Unknown member (orphan SKU, anonymous shopper, unmatched store).
+    d.date_sk                                   as txn_date_sk,
+    coalesce(p.product_sk, -1)                  as product_sk,
+    coalesce(c.customer_sk, -1)                 as customer_sk,
+    coalesce(s.store_sk, -1)                    as store_sk
 from joined j
+left join {{ ref('dim_date') }} d
+    on d.date_day = j.txn_date
 left join {{ ref('dim_product') }} p
     on p.sku = j.sku
    and j.txn_date >= p.valid_from

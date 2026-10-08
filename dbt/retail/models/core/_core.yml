@@ -4,41 +4,65 @@ models:
   - name: dim_date
     description: Calendar, one row per day from 2025-01-01 to one year ahead.
     columns:
+      - name: date_sk
+        description: Integer key YYYYMMDD (the accepted smart-key exception for dates).
+        data_tests: [unique, not_null]
       - name: date_day
         data_tests: [unique, not_null]
 
   - name: dim_store
     description: >
-      SCD2 store dimension from the CDC history. Join facts on store_id with
-      valid_from <= txn_ts < valid_to (valid_to null = current).
+      SCD2 store dimension from the CDC history. Incremental merge: store_sk is a sequential
+      integer assigned once per version and never changed; -1 is the Unknown member.
+      Point-in-time join: store_id match and valid_from <= txn_ts < valid_to (null = current).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [store_id, version_ts]
     columns:
       - name: store_sk
+        description: Surrogate key - meaningless sequential integer (-1 = Unknown).
         data_tests: [unique, not_null]
       - name: valid_from
         description: First version starts 1900-01-01 (history before the DMS full load is unknown).
 
   - name: dim_customer
-    description: SCD2 loyalty customer dimension (tier upgrades, email fixes) from the CDC history.
+    description: >
+      SCD2 loyalty customer dimension (tier upgrades, email fixes) from the CDC history.
+      Same keying as dim_store; -1 = Unknown (anonymous sales point here).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [customer_id, version_ts]
     columns:
       - name: customer_sk
+        description: Surrogate key - meaningless sequential integer (-1 = Unknown).
         data_tests: [unique, not_null]
       - name: loyalty_tier
         data_tests:
           - accepted_values:
               arguments:
-                values: [bronze, silver, gold]
+                values: [bronze, silver, gold, unknown]
 
   - name: dim_product
-    description: SCD2 product dimension from consecutive daily supplier snapshots (price, active flag).
+    description: >
+      SCD2 product dimension from consecutive daily supplier snapshots (price, active flag).
+      Same keying as dim_store; -1 = Unknown (sales lines with an orphan SKU point here).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [sku, version_date]
     columns:
       - name: product_sk
+        description: Surrogate key - meaningless sequential integer (-1 = Unknown).
         data_tests: [unique, not_null]
 
   - name: fct_sales_lines
     description: >
       Sales fact, grain = one product on one transaction. Incremental merge; status changes on
       the header (voids, returns) re-merge the transaction's lines. Hard-deleted transactions
-      stay with is_deleted = true - filter them out in reporting.
+      stay with is_deleted = true - filter them out in reporting. Dimension keys are never
+      null: -1 points at the Unknown member.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
@@ -47,7 +71,7 @@ models:
       - name: net_amount
         description: quantity * unit_price - discount_amount.
       - name: sku
-        description: Orphan SKUs (not in any catalog file) are a planted defect.
+        description: Orphan SKUs (not in any catalog file) are a planted defect; their product_sk is -1.
         data_tests:
           - relationships:
               arguments:
@@ -61,6 +85,33 @@ models:
           - not_null:
               config:
                 where: "not is_deleted"
+      - name: txn_date_sk
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_sk
+      - name: product_sk
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_product')
+                field: product_sk
+      - name: customer_sk
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customer')
+                field: customer_sk
+      - name: store_sk
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_store')
+                field: store_sk
 
   - name: fct_payments
     description: Payment fact, grain = one tender. Never join to fct_sales_lines (fan-out).
