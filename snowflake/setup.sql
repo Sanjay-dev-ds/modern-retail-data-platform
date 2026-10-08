@@ -1,7 +1,8 @@
 -- Snowflake setup for the retail ELT pipeline (a Terraform template, see infra/terraform/outputs.tf).
 -- Get the rendered script and run it ONCE in a Snowsight worksheet ("Run All"):
 --   terraform -chdir=infra/terraform output -raw snowflake_setup_sql | pbcopy
--- Safe to re-run: everything is IF NOT EXISTS (the integration's external ID never changes).
+-- Safe to re-run: IF NOT EXISTS everywhere except the data-less stages (the integration's
+-- external ID never changes).
 -- Last statement: DESC INTEGRATION -> copy STORAGE_AWS_IAM_USER_ARN and STORAGE_AWS_EXTERNAL_ID
 -- into terraform.tfvars (snowflake_iam_user_arn, snowflake_external_id) and apply again.
 
@@ -48,12 +49,17 @@ CREATE FILE FORMAT IF NOT EXISTS csv_fmt
   TYPE = CSV PARSE_HEADER = TRUE FIELD_OPTIONALLY_ENCLOSED_BY = '"' ERROR_ON_COLUMN_COUNT_MISMATCH = FALSE;
 
 -- One stage per source (a stage URL must be inside the integration's allowed locations).
-CREATE STAGE IF NOT EXISTS pos_stage
-  URL = 's3://${bucket}/pos/pos/' STORAGE_INTEGRATION = S3_RAW_INT FILE_FORMAT = parquet_fmt;
-CREATE STAGE IF NOT EXISTS clickstream_stage
-  URL = 's3://${bucket}/clickstream/events/' STORAGE_INTEGRATION = S3_RAW_INT FILE_FORMAT = json_fmt;
-CREATE STAGE IF NOT EXISTS catalog_stage
-  URL = 's3://${bucket}/catalog/products/' STORAGE_INTEGRATION = S3_RAW_INT FILE_FORMAT = csv_fmt;
+-- File formats are fully qualified: a stage resolves the name at COPY time in the *session's*
+-- schema (Airflow's is STAGING), not in RAW. Stages hold no data, so OR REPLACE is safe.
+CREATE OR REPLACE STAGE pos_stage
+  URL = 's3://${bucket}/pos/pos/' STORAGE_INTEGRATION = S3_RAW_INT
+  FILE_FORMAT = (FORMAT_NAME = '${database}.RAW.PARQUET_FMT');
+CREATE OR REPLACE STAGE clickstream_stage
+  URL = 's3://${bucket}/clickstream/events/' STORAGE_INTEGRATION = S3_RAW_INT
+  FILE_FORMAT = (FORMAT_NAME = '${database}.RAW.JSON_FMT');
+CREATE OR REPLACE STAGE catalog_stage
+  URL = 's3://${bucket}/catalog/products/' STORAGE_INTEGRATION = S3_RAW_INT
+  FILE_FORMAT = (FORMAT_NAME = '${database}.RAW.CSV_FMT');
 
 -- RAW tables. POS (DMS Parquet) and clickstream (JSON) land as VARIANT: schema-on-read, so a
 -- source column change never breaks the load. dbt staging models type and dedupe them.

@@ -23,6 +23,7 @@ select
     p.transaction_id,
     p.method,
     p.amount,
+    h.total_amount                                  as transaction_total,
     h.txn_ts,
     h.txn_ts::date                                  as txn_date,
     h.store_id,

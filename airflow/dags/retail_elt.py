@@ -12,7 +12,7 @@ import pendulum
 from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
 from airflow.sdk import DAG, TaskGroup
 from cosmos import DbtTaskGroup, ExecutionConfig, ProfileConfig, ProjectConfig, RenderConfig
-from cosmos.constants import SourceRenderingBehavior, TestBehavior
+from cosmos.constants import SourceRenderingBehavior, TestBehavior, TestIndirectSelection
 from cosmos.profiles import SnowflakePrivateKeyPemProfileMapping
 
 SNOWFLAKE_CONN = "snowflake_default"
@@ -60,7 +60,13 @@ with DAG(
             target_name="dev",
             profile_mapping=SnowflakePrivateKeyPemProfileMapping(conn_id=SNOWFLAKE_CONN),
         ),
-        execution_config=ExecutionConfig(dbt_executable_path=DBT_EXECUTABLE),
+        execution_config=ExecutionConfig(
+            dbt_executable_path=DBT_EXECUTABLE,
+            # A test that spans two models runs with the model whose other parent is upstream:
+            # relationships fct_sales_lines.sku -> dim_product runs with fct_sales_lines, so
+            # dim_product's test task only runs dimension tests.
+            test_indirect_selection=TestIndirectSelection.BUILDABLE,
+        ),
         render_config=RenderConfig(
             test_behavior=TestBehavior.AFTER_EACH,
             source_rendering_behavior=SourceRenderingBehavior.WITH_TESTS_OR_FRESHNESS,
