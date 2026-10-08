@@ -32,7 +32,7 @@ dms-resume:
 dms-stop:
 	aws dms stop-replication-task --replication-task-arn $$($(TF_OUT) dms_task_arn)
 
-# Shell on the platform host (then: sudo airflow-cli dags list)
+# Shell on the platform host (generator commands: see README)
 ssm:
 	$$($(TF_OUT) ssm_command)
 

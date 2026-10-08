@@ -1,5 +1,0 @@
-boto3>=1.34
-psycopg[binary]>=3.1
-Faker>=25.0
-numpy>=1.26
-PyYAML>=6.0

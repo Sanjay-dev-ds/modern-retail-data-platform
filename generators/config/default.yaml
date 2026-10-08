@@ -1,27 +1,44 @@
+# Synthetic source data settings. Contract: docs/source-contracts.md
 seed: 42
 
+# Minimum scale: big enough to show grain, SCD2 and CDC behaviour, small enough for
+# db.t4g.small and a cheap Snowflake warehouse (~45k transactions, ~135k lines of history).
 scale:
-  stores: 50
-  registers_per_store: 4
-  skus: 5000
-  loyalty_members: 200000
-  history_days: 180
-  transactions_per_day: 20000
+  stores: 10                    # physical stores; store_id 0 = Online is always added
+  skus: 500
+  customers: 5000
+  history_days: 30              # backdated POS history (clickstream has no history: live only)
+  transactions_per_day: 1500
+  avg_lines_per_transaction: 3
+
+mix:
+  online_share: 0.30            # share of transactions with channel = online (store_id 0)
+  anonymous_share: 0.40         # in-store transactions with no customer_id
+  split_payment_rate: 0.05      # transactions paid with more than one method
+
+# Share of new transactions later updated or deleted (DMS CDC updates/deletes)
+mutations:
+  void_rate: 0.01               # status -> voided, within minutes
+  return_rate: 0.02             # status -> returned, days later
+  delete_rate: 0.0005           # hard delete (test transactions) -> Op = 'D'
+  tier_change_rate: 0.002       # customers per day whose loyalty_tier changes (SCD2)
+  store_change_rate: 0.01       # stores per day whose format/region changes (SCD2)
+
+catalog:                        # daily full snapshot CSV
+  price_change_rate: 0.02       # SKUs per day with a new list_price
+  new_skus_per_day: 3
+  discontinue_rate: 0.002       # SKUs per day set is_active = false
 
 # Fraction of records affected by each injected defect
 defects:
-  duplicate_events: 0.01
-  late_arriving: 0.02
-  null_values: 0.005
-  invalid_values: 0.005
-  orphan_sku: 0.003
-  schema_drift_day: null        # e.g. "2026-11-01" adds a column to the catalog file
-
-mutations:                      # share of new transactions later updated or deleted
-  void_rate: 0.01
-  return_rate: 0.02
-  delete_rate: 0.0005
+  duplicate_events: 0.01        # clickstream: same event_id sent twice
+  late_arriving: 0.02           # clickstream: event_ts hours older than arrival
+  null_values: 0.005            # customers.email, transactions.customer_id on online orders
+  invalid_values: 0.005         # quantity <= 0 or unit_price = 0 on completed sales
+  orphan_sku: 0.003             # transaction_lines.sku not in the catalog
+  payment_mismatch: 0.002       # sum(payments.amount) != transactions.total_amount
+  schema_drift_day: null        # e.g. "2026-11-01": catalog CSV gains a pack_size column
 
 targets:
-  clickstream_events_per_second: 20
+  clickstream_events_per_second: 5
   incremental_cycle_seconds: 30

@@ -1,5 +1,5 @@
 terraform {
-  required_version = ">= 1.6"
+  required_version = ">= 1.10" # S3-native state locking (use_lockfile)
 
   required_providers {
     aws = {
@@ -12,14 +12,15 @@ terraform {
     }
   }
 
-  # State lives in the shared bucket under the reserved terraform/ prefix. Create the bucket and
-  # lock table once with infra/create_remote_state.sh. State holds the RDS password: keep it private.
+  # State lives in the shared bucket under the reserved terraform/ prefix; the lock is a
+  # <key>.tflock object next to it (no DynamoDB). Create the bucket once with
+  # infra/create_remote_state.sh. State holds the RDS password: keep it private.
   backend "s3" {
-    bucket         = "modern-retail-data-platform-20261007"
-    key            = "terraform/envs/dev/terraform.tfstate"
-    region         = "us-east-1"
-    dynamodb_table = "modern-retail-data-platform-tf-lock"
-    encrypt        = true
+    bucket       = "modern-retail-data-platform-20261007"
+    key          = "terraform/envs/dev/terraform.tfstate"
+    region       = "us-east-1"
+    use_lockfile = true
+    encrypt      = true
   }
 }
 

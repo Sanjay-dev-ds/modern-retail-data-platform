@@ -8,9 +8,9 @@ Synthetic retail data flowing through real AWS source services into S3, then Sno
 |---|---|
 | `infra/terraform` | All AWS infrastructure, one flat Terraform root (one file per concern) |
 | `sql/pos` | POS source schema |
-| `scripts` | Operational helpers (`scripts/airflow/install_airflow.sh` provisions the platform host) |
-| `generators` | Synthetic data generators (config, entities, sources, writers) |
-| `airflow/dags` | Airflow DAGs, read on the host from `/opt/retail/airflow/dags` |
+| `scripts` | `setup_host.sh` (EC2 first-boot setup), `init_db.sh` (creates the POS schema) |
+| `generators` | `retail-gen`, the synthetic data generator (Python, managed with uv) |
+| `airflow` | `docker-compose.yaml` for Airflow on the EC2 host, and `dags/` |
 | `snowflake` | DDL, Snowpipe, RBAC scripts (later phase) |
 | `dbt/retail` | staging, core, marts models (later phase) |
 | `docs` | Contracts and design notes |
@@ -26,14 +26,14 @@ Synthetic retail data flowing through real AWS source services into S3, then Sno
 | `dms.tf` | Replication instance, endpoints and a full-load + CDC task to `pos/` (toggle with `enable_dms`) |
 | `streaming.tf` | Kinesis stream to Firehose, writing to `clickstream/events/` |
 | `glue.tf` | Glue database and crawler for Athena validation |
-| `ec2.tf` | **One EC2 host** (`t3.medium`) running Airflow and the generators |
+| `ec2.tf` | **One EC2 host** (`t3.medium`) running Airflow (Docker) and the generator |
 | `budget.tf` | Monthly cost budget with email alerts |
 
 The bucket `modern-retail-data-platform-20261007` holds both Terraform state (under `terraform/`) and the raw landing data. Terraform never creates or deletes it, and the platform role can only access the data prefixes.
 
 ## Deploy
 
-One-time, create the bucket and lock table:
+One-time, create the bucket (state locking uses an S3 lock file, so no DynamoDB table):
 
 ```bash
 bash infra/create_remote_state.sh
@@ -46,35 +46,87 @@ make tf-init tf-validate tf-plan
 make tf-apply
 ```
 
-## Bring the sources up
+## Platform host
 
-1. `make ssm` to open a shell on the platform host. If `repo_url` is unset, clone this repo into `/opt/retail` as the `airflow` user, then rerun `sudo /usr/local/sbin/install_airflow.sh` to install the generator dependencies.
-2. `bash scripts/init_db.sh` creates the `pos` schema and confirms `rds.logical_replication` is `on`.
-3. Run the seed load (dimensions, then history) once the generator is implemented.
-4. `make dms-start` (full load, then CDC). Check `aws dms describe-table-statistics` and `pos/pos/<table>/` in S3.
-5. Start the incremental generator (DB changes + Kinesis events).
-6. Optional: run the Glue crawler, then query with Athena.
+On first boot, user_data runs [`scripts/setup_host.sh`](scripts/setup_host.sh). It installs Docker, Docker Compose and uv, clones this repo to `/opt/retail` (from `repo_url`), syncs the generator environment, and starts Airflow with Docker Compose. The first boot takes about 5 minutes; the log is `/var/log/platform-setup.log`.
 
-## Platform host (Airflow + generators)
+- **Airflow** runs as containers defined in [`airflow/docker-compose.yaml`](airflow/docker-compose.yaml): Airflow 3.3.2 (LocalExecutor) with a Postgres metadata DB. DAGs are read from `/opt/retail/airflow/dags`. Containers use the EC2 instance role, and connections come from Secrets Manager under `<prefix>/airflow/connections/` (`pos_db` is created by Terraform).
+- **The generator** runs directly on the host with `uv run`.
+- **Values from Terraform** (`DB_SECRET_ID`, `KINESIS_STREAM`, `RAW_BUCKET`, `DMS_TASK_ARN`, ...) are in `/etc/airflow/infra.env` and are loaded into every login shell.
 
-On first boot, user_data runs `scripts/airflow/install_airflow.sh`, which installs:
+## Run the generator on EC2
 
-- Airflow 3 (`airflow_version`, default 3.3.2) with the amazon, postgres and snowflake providers in `/opt/airflow/venv`
-- dbt-snowflake in `/opt/airflow/dbt-venv`
-- the generator dependencies in `/opt/airflow/gen-venv`
-- a local PostgreSQL 15 metadata DB, with LocalExecutor
-- systemd services `airflow-api-server`, `airflow-scheduler`, `airflow-dag-processor` and `airflow-triggerer`, plus a daily log cleanup timer
+Everything below runs **on the EC2 host**, not on your laptop.
 
-The first install takes about 5–10 minutes. Follow it with `sudo tail -f /var/log/platform-install.log`.
+**1. Open a shell on the host.** Either run `make ssm` from your laptop, or in the AWS console go to EC2 → `retail-data-platform-dev-platform` → Connect → Session Manager. Then switch to a root login shell, which loads the Terraform values:
 
-| Task | How |
+```bash
+sudo -i
+tail -n 3 /var/log/platform-setup.log
+cd /opt/retail && git pull
+```
+
+The log should end with `[setup] done`. If `repo_url` was empty or the repo is private, clone it to `/opt/retail` yourself, then run `/usr/local/sbin/setup_host.sh`.
+
+**2. Create the POS schema** (once):
+
+```bash
+bash scripts/init_db.sh
+```
+
+**3. Seed 30 days of history** (once, before DMS starts; takes 2–3 minutes). This loads stores, customers, about 47k transactions with their lines and payments, and one catalog snapshot per day:
+
+```bash
+cd /opt/retail/generators
+uv run retail-gen seed
+```
+
+**4. Start DMS** (full load, then CDC), and check progress:
+
+```bash
+aws dms start-replication-task --replication-task-arn "$DMS_TASK_ARN" --start-replication-task-type start-replication
+aws dms describe-table-statistics --replication-task-arn "$DMS_TASK_ARN" \
+  --query 'TableStatistics[].[TableName,FullLoadRows,Inserts,Updates,Deletes]' --output table
+```
+
+**5. Try one live cycle**: about 30 seconds of new sales, CDC changes and roughly 150 clickstream events:
+
+```bash
+uv run retail-gen run --once
+```
+
+**6. Run the live loop in the background** (it survives closing the session):
+
+```bash
+systemd-run --unit retail-gen --working-directory /opt/retail/generators --setenv HOME=/root \
+  --property EnvironmentFile=/etc/airflow/infra.env /usr/local/bin/uv run --frozen retail-gen run
+journalctl -u retail-gen -f      # follow the logs (Ctrl+C stops following, not the generator)
+systemctl stop retail-gen        # stop it
+```
+
+The unit isn't persistent: start it again after the instance is stopped and restarted.
+
+**7. Check the landing data:**
+
+```bash
+aws s3 ls "s3://$RAW_BUCKET/pos/pos/" --recursive | tail
+aws s3 ls "s3://$RAW_BUCKET/clickstream/events/" --recursive | tail   # Firehose flushes about every 60 s
+aws s3 ls "s3://$RAW_BUCKET/catalog/products/" --recursive | tail
+```
+
+**Notes:**
+- **Reset before DMS:** `uv run retail-gen seed --force` truncates the POS tables and reloads them. Never do this after DMS has started, because DMS does not replicate `TRUNCATE`.
+- **Volumes and defect rates** are set in [`generators/config/default.yaml`](generators/config/default.yaml). The data contract is [`docs/source-contracts.md`](docs/source-contracts.md).
+
+## Airflow on EC2
+
+| Task | Command (on the host, as root, in `/opt/retail/airflow`) |
 |---|---|
-| Shell | `make ssm`, then `sudo airflow-cli dags list` |
-| UI | `make airflow-ui`, then open http://localhost:8080 and log in as `admin`. The password is in `/opt/airflow/simple_auth_manager_passwords.json.generated`. |
-| DAGs | Read from `/opt/retail/airflow/dags`. Deploy with `sudo -u airflow git -C /opt/retail pull`. |
-| Connections | The Secrets Manager backend reads `<prefix>/airflow/connections/<conn_id>`. `pos_db` is created by Terraform. Add `snowflake_default` the same way. |
-| Platform values | Available as Airflow Variables: `raw_bucket`, `dms_task_arn`, `glue_crawler`, `kinesis_stream`, `pos_db_secret_id`, `repo_dir`, `dbt_bin`, `generator_python` |
-| Re-run or upgrade | `sudo AIRFLOW_VERSION=x.y.z /usr/local/sbin/install_airflow.sh`. The script is idempotent and keeps its keys. Terraform does not re-apply script changes, so the host (and its metadata DB) is never replaced. |
+| UI | From your laptop, run `make airflow-ui`, then open http://localhost:8080. There's no login, because it's only reachable through the tunnel. |
+| Status / logs | `docker compose ps`, `docker compose logs -f airflow-scheduler` |
+| CLI | `docker compose exec airflow-scheduler airflow dags list` |
+| Deploy DAGs | `git -C /opt/retail pull` (picked up automatically) |
+| Restart / upgrade | Edit `AIRFLOW_VERSION` in `.env`, then `docker compose --env-file .env --env-file /etc/airflow/infra.env up -d` |
 
 ## Cost control
 

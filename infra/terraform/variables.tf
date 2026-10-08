@@ -36,8 +36,9 @@ variable "enable_dms" {
 }
 
 variable "dms_instance_class" {
-  type    = string
-  default = "dms.t3.micro"
+  description = "Smallest orderable class in us-east-1 (dms.t3.micro is no longer offered). Check with: aws dms describe-orderable-replication-instances"
+  type        = string
+  default     = "dms.t3.small"
 }
 
 variable "ec2_instance_type" {
@@ -52,9 +53,9 @@ variable "airflow_version" {
 }
 
 variable "repo_url" {
-  description = "Git URL of this repo, cloned to /opt/retail on first boot. Empty skips the clone."
+  description = "Git URL of the modern-retail-data-platform repo, cloned to /opt/retail on first boot. Empty skips the clone."
   type        = string
-  default     = ""
+  default     = "https://github.com/Sanjay-dev-ds/modern-retail-data-platform.git"
 }
 
 variable "repo_branch" {
@@ -65,7 +66,7 @@ variable "repo_branch" {
 variable "alert_email" {
   description = "Email for budget alerts. Empty disables the budget."
   type        = string
-  default     = ""
+  default     = "sanjay28.js@gmail.com"
 }
 
 variable "monthly_budget_usd" {

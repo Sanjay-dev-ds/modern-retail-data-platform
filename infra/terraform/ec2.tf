@@ -1,13 +1,13 @@
-# Single platform host: Airflow 3 (orchestration) and the synthetic data generators.
-# Installed on first boot by scripts/airflow/install_airflow.sh. No inbound rules: shell and
-# Airflow UI go through SSM (make ssm / make airflow-ui).
+# Single platform host: Airflow 3 in Docker (orchestration) and the synthetic data generator.
+# Set up on first boot by scripts/setup_host.sh. No inbound rules: shell and Airflow UI go
+# through SSM (make ssm / make airflow-ui).
 
 data "aws_ssm_parameter" "al2023" {
   name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
 }
 
 locals {
-  # Written to /etc/airflow/infra.env and read by the install script.
+  # Written to /etc/airflow/infra.env; read by setup_host.sh, docker compose and login shells.
   host_env = {
     AWS_DEFAULT_REGION = var.region
     AIRFLOW_VERSION    = var.airflow_version
@@ -24,14 +24,14 @@ locals {
   user_data = <<-EOT
     #!/bin/bash
     set -euo pipefail
-    exec > >(tee -a /var/log/platform-install.log) 2>&1
+    exec > >(tee -a /var/log/platform-setup.log) 2>&1
     mkdir -p /etc/airflow
     cat > /etc/airflow/infra.env <<'ENV'
     ${join("\n", [for k, v in local.host_env : "${k}=${v}"])}
     ENV
-    echo '${base64encode(file("${path.module}/../../scripts/airflow/install_airflow.sh"))}' | base64 -d > /usr/local/sbin/install_airflow.sh
-    chmod 700 /usr/local/sbin/install_airflow.sh
-    /usr/local/sbin/install_airflow.sh
+    echo '${base64encode(file("${path.module}/../../scripts/setup_host.sh"))}' | base64 -d > /usr/local/sbin/setup_host.sh
+    chmod 700 /usr/local/sbin/setup_host.sh
+    /usr/local/sbin/setup_host.sh
   EOT
 }
 
@@ -45,7 +45,7 @@ resource "aws_instance" "platform" {
 
   metadata_options {
     http_tokens                 = "required"
-    http_put_response_hop_limit = 1
+    http_put_response_hop_limit = 2 # lets Airflow containers use the instance role
   }
 
   root_block_device {
@@ -54,10 +54,10 @@ resource "aws_instance" "platform" {
     encrypted   = true
   }
 
-  # gzip keeps the embedded install script well under the 16 KB user_data limit.
+  # gzip keeps the embedded setup script well under the 16 KB user_data limit.
   user_data_base64 = base64gzip(local.user_data)
 
-  # The Airflow metadata DB lives on this host: don't replace it when the AMI or the install
+  # The Airflow metadata DB lives on this host: don't replace it when the AMI or the setup
   # script changes. Re-run the script over SSM to apply script changes.
   lifecycle {
     ignore_changes = [ami, user_data_base64]

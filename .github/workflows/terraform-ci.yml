@@ -1,7 +1,7 @@
 name: terraform-ci
 on:
   pull_request:
-    paths: ["infra/terraform/**", "scripts/airflow/**"]
+    paths: ["infra/terraform/**", "scripts/**"]
 
 jobs:
   validate:
@@ -10,7 +10,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.9.5"
+          terraform_version: "1.14.6"
       - name: fmt
         run: terraform -chdir=infra/terraform fmt -check -recursive
       - name: init
