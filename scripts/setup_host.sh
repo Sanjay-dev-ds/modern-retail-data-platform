@@ -45,6 +45,6 @@ log "Airflow (docker compose)"
 cd $REPO_DIR/airflow
 cp $PLATFORM_ENV .env   # compose reads ${VAR}s from .env in this directory
 mkdir -p dags logs && chown -R 50000:0 logs
-docker compose up -d
+docker compose up -d --build   # image = Airflow + Cosmos + dbt (airflow/Dockerfile)
 
 log "done. Airflow UI: make airflow-ui (from your machine). Generator: see README 'Run the generator on EC2'."

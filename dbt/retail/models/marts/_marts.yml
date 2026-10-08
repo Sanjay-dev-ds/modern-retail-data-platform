@@ -1,0 +1,18 @@
+version: 2
+
+models:
+  - name: mart_daily_sales
+    description: Daily sales by store and channel (completed orders, units, revenue, voids, returns).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [txn_date, store_id, channel]
+    columns:
+      - name: net_revenue
+        description: Sum of net_amount for completed sales (after line discounts).
+
+  - name: mart_web_funnel
+    description: Daily web funnel - sessions at each step and purchase conversion rate.
+    columns:
+      - name: session_date
+        data_tests: [unique, not_null]

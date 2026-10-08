@@ -1,0 +1,77 @@
+version: 2
+
+models:
+  - name: dim_date
+    description: Calendar, one row per day from 2025-01-01 to one year ahead.
+    columns:
+      - name: date_day
+        data_tests: [unique, not_null]
+
+  - name: dim_store
+    description: >
+      SCD2 store dimension from the CDC history. Join facts on store_id with
+      valid_from <= txn_ts < valid_to (valid_to null = current).
+    columns:
+      - name: store_sk
+        data_tests: [unique, not_null]
+      - name: valid_from
+        description: First version starts 1900-01-01 (history before the DMS full load is unknown).
+
+  - name: dim_customer
+    description: SCD2 loyalty customer dimension (tier upgrades, email fixes) from the CDC history.
+    columns:
+      - name: customer_sk
+        data_tests: [unique, not_null]
+      - name: loyalty_tier
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [bronze, silver, gold]
+
+  - name: dim_product
+    description: SCD2 product dimension from consecutive daily supplier snapshots (price, active flag).
+    columns:
+      - name: product_sk
+        data_tests: [unique, not_null]
+
+  - name: fct_sales_lines
+    description: >
+      Sales fact, grain = one product on one transaction. Incremental merge; status changes on
+      the header (voids, returns) re-merge the transaction's lines. Hard-deleted transactions
+      stay with is_deleted = true - filter them out in reporting.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [transaction_id, line_no]
+    columns:
+      - name: net_amount
+        description: quantity * unit_price - discount_amount.
+      - name: sku
+        description: Orphan SKUs (not in any catalog file) are a planted defect.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_product')
+                field: sku
+              config:
+                severity: warn
+                where: "not is_deleted"
+      - name: txn_ts
+        data_tests:
+          - not_null:
+              config:
+                where: "not is_deleted"
+
+  - name: fct_payments
+    description: Payment fact, grain = one tender. Never join to fct_sales_lines (fan-out).
+    columns:
+      - name: payment_id
+        data_tests: [unique, not_null]
+
+  - name: fct_sessions
+    description: >
+      Web session fact, grain = one session, with funnel flags. Incremental on _loaded_at so late
+      events re-aggregate their session. order_id joins to fct_sales_lines.transaction_id.
+    columns:
+      - name: session_id
+        data_tests: [unique, not_null]

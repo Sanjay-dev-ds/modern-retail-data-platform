@@ -1,0 +1,110 @@
+version: 2
+
+# Planted source defects (docs/source-contracts.md) are tested with severity: warn, so they are
+# reported in every run without failing the pipeline. Structural guarantees are errors.
+
+models:
+  - name: stg_pos__stores_cdc
+    description: Every replicated version of every store (full-load row plus each CDC change).
+  - name: stg_pos__stores
+    description: Current state of each store. store_id 0 is the online shop.
+    columns:
+      - name: store_id
+        data_tests: [unique, not_null]
+
+  - name: stg_pos__customers_cdc
+    description: Every replicated version of every loyalty customer.
+  - name: stg_pos__customers
+    description: Current state of each loyalty customer. email and phone are PII.
+    columns:
+      - name: customer_id
+        data_tests: [unique, not_null]
+      - name: email
+        description: Nullable; some sign-ups skip it (planted null_values defect).
+        data_tests:
+          - not_null:
+              config:
+                severity: warn
+                where: "not is_deleted"
+
+  - name: stg_pos__transactions
+    description: Order headers, latest version per transaction_id. Grain - one sale.
+    columns:
+      - name: transaction_id
+        data_tests: [unique, not_null]
+      - name: channel
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [store, online]
+              config:
+                where: "not is_deleted"
+      - name: status
+        description: completed -> voided (minutes later) or returned (days later).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [completed, voided, returned]
+              config:
+                where: "not is_deleted"
+      - name: customer_id
+        description: Null = anonymous. Online orders should always have one (planted defect).
+        data_tests:
+          - not_null:
+              config:
+                severity: warn
+                where: "channel = 'online' and not is_deleted"
+
+  - name: stg_pos__transaction_lines
+    description: Order lines, latest version. Grain - one product on one transaction.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [transaction_id, line_no]
+    columns:
+      - name: quantity
+        description: Should be positive; 0 / -1 are planted invalid values.
+        data_tests:
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "> 0"
+              config:
+                severity: warn
+                where: "not is_deleted"
+
+  - name: stg_pos__payments
+    description: Tenders, latest version. Grain - one payment; several per split-tender sale.
+    columns:
+      - name: payment_id
+        data_tests: [unique, not_null]
+      - name: method
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [card, cash, wallet, gift_card]
+              config:
+                where: "not is_deleted"
+
+  - name: stg_clickstream__events
+    description: Clickstream events deduplicated on event_id (Firehose is at-least-once).
+    columns:
+      - name: event_id
+        data_tests: [unique, not_null]
+      - name: event_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [page_view, product_view, add_to_cart, checkout_started, purchase]
+      - name: event_ts
+        description: Device time (UTC). Use this, not the S3 dt=/hh= partition (arrival time).
+        data_tests: [not_null]
+
+  - name: stg_catalog__products
+    description: One row per SKU per daily supplier snapshot.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [sku, snapshot_date]
+    columns:
+      - name: pack_size
+        description: Added by the supplier without notice from schema_drift_day on.

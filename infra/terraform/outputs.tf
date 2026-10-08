@@ -42,3 +42,17 @@ output "airflow_ui_tunnel_command" {
   description = "Forwards the Airflow UI to http://localhost:8080"
   value       = "aws ssm start-session --target ${aws_instance.platform.id} --document-name AWS-StartPortForwardingSession --parameters portNumber=8080,localPortNumber=8080"
 }
+
+output "snowflake_setup_sql" {
+  description = "Run once in Snowsight as ACCOUNTADMIN: terraform output -raw snowflake_setup_sql | pbcopy"
+  value = templatefile("${path.module}/../../snowflake/setup.sql", {
+    public_key   = local.snowflake_public_key
+    role_arn     = aws_iam_role.platform.arn
+    bucket       = var.bucket_name
+    s3_locations = join(", ", [for l in local.snowflake_s3_locations : "'${l}'"])
+    user         = local.snowflake.user
+    role         = local.snowflake.role
+    warehouse    = local.snowflake.warehouse
+    database     = local.snowflake.database
+  })
+}

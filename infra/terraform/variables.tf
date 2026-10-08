@@ -73,3 +73,22 @@ variable "monthly_budget_usd" {
   type    = number
   default = 50
 }
+
+# ---- Snowflake (see snowflake.tf and README "Load into Snowflake")
+variable "snowflake_account" {
+  description = "Snowflake account identifier, orgname-accountname (Snowsight: Admin > Accounts)"
+  type        = string
+  default     = ""
+}
+
+variable "snowflake_iam_user_arn" {
+  description = "STORAGE_AWS_IAM_USER_ARN from DESC INTEGRATION S3_RAW_INT. Empty until setup.sql has run."
+  type        = string
+  default     = ""
+}
+
+variable "snowflake_external_id" {
+  description = "STORAGE_AWS_EXTERNAL_ID from DESC INTEGRATION S3_RAW_INT"
+  type        = string
+  default     = ""
+}

@@ -6,7 +6,7 @@ All sources land in one bucket, `modern-retail-data-platform-20261007`. The same
 
 | # | Source | Business role | Mechanism | S3 location | Format |
 |---|---|---|---|---|---|
-| A | POS / orders DB (RDS PostgreSQL, schema `pos`) | System of record for store and online sales | DMS full load + CDC | `pos/pos/<table>/` (CDC files under `YYYY/MM/DD/`) | Parquet + `Op`, `_dms_commit_ts` |
+| A | POS / orders DB (RDS PostgreSQL, schema `pos`) | System of record for store and online sales | DMS full load + CDC | `pos/pos/<table>/` (CDC files under `YYYYMMDD/`) | Parquet + `Op`, `_dms_commit_ts` |
 | B | Web/app clickstream | Shopper behaviour | Kinesis Data Streams → Firehose | `clickstream/events/dt=YYYY-MM-DD/hh=HH/` | JSON Lines, gzip |
 | C | Product catalog (third-party supplier feed) | Product reference data | Daily file upload | `catalog/products/dt=YYYY-MM-DD/` | CSV, full snapshot |
 
@@ -60,7 +60,7 @@ DDL: [`sql/pos/01_schema.sql`](../sql/pos/01_schema.sql). There are 30 days of b
 | Test-transaction cleanup | transactions (+ its lines and payments) | rare (0.05%) | `Op = D` |
 
 **DMS specifics:**
-- Full-load files (`LOAD*.parquet`) sit directly in the table folder. CDC files sit under `YYYY/MM/DD/`.
+- Full-load files (`LOAD*.parquet`) sit directly in the table folder. CDC files sit under `YYYYMMDD/`.
 - `_dms_commit_ts` is the source commit time. Use it to keep the latest version of each key, because a single CDC batch can contain several changes to the same row.
 - With the `test_decoding` plugin, **delete rows (`Op = D`) carry only the primary-key columns**. Every other column is null.
 

@@ -3,6 +3,9 @@
 #   dms.amazonaws.com       DMS S3 target endpoint
 #   firehose.amazonaws.com  Kinesis -> S3 delivery
 #   glue.amazonaws.com      Glue crawler
+#   Snowflake's IAM user    S3 storage integration (once snowflake_iam_user_arn is set).
+#                           Tradeoff of the one-role design: Snowflake gets the role's full
+#                           S3 access, although it only reads.
 
 data "aws_iam_policy_document" "assume" {
   statement {
@@ -16,6 +19,26 @@ data "aws_iam_policy_document" "assume" {
         "firehose.amazonaws.com",
         "glue.amazonaws.com",
       ]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.snowflake_iam_user_arn == "" ? [] : [1]
+
+    content {
+      sid     = "SnowflakeStorageIntegration"
+      actions = ["sts:AssumeRole"]
+
+      principals {
+        type        = "AWS"
+        identifiers = [var.snowflake_iam_user_arn]
+      }
+
+      condition {
+        test     = "StringEquals"
+        variable = "sts:ExternalId"
+        values   = [var.snowflake_external_id]
+      }
     }
   }
 }
@@ -32,6 +55,7 @@ data "aws_iam_policy_document" "platform" {
     sid = "DataObjects"
     actions = [
       "s3:GetObject",
+      "s3:GetObjectVersion", # Snowflake reads from the versioned bucket
       "s3:PutObject",
       "s3:DeleteObject",
       "s3:PutObjectTagging",
