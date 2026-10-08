@@ -18,3 +18,10 @@ data/
 target/
 dbt_packages/
 logs/
+
+# Terraform plan files (contain state, incl. secrets after an apply)
+tfplan
+*.tfplan
+
+# macOS
+.DS_Store
