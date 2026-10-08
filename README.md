@@ -185,6 +185,16 @@ The DAG is [`airflow/dags/retail_elt.py`](airflow/dags/retail_elt.py). The Airfl
 - Run the DAG twice. The second `copy_*` tasks load 0 files, and `fct_sales_lines` keeps the same row count, which shows the incremental merge doesn't duplicate rows.
 - The planted defects (orphan SKUs, invalid quantities, payment mismatches, null emails) appear as **warnings** in the dbt test tasks. They don't fail the run.
 
+**dbt docs** (lineage graph, model and column descriptions, tests):
+1. On the EC2 host, as root, generate and serve the docs. Leave it running; Ctrl+C stops it:
+   ```bash
+   bash /opt/retail/scripts/dbt_docs.sh
+   ```
+2. On your laptop, open the tunnel, then go to http://localhost:8081:
+   ```bash
+   make dbt-docs
+   ```
+
 **Cost:** the `RETAIL_WH` warehouse is XSMALL and suspends after 60 s idle. Each hourly run keeps it up for a minute or two. Pause `retail_elt` in the Airflow UI when you aren't using it.
 
 ## Cost control

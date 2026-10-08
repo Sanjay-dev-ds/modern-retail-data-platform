@@ -1,0 +1,16 @@
+# For running dbt by hand on the EC2 host (scripts/dbt_docs.sh). Airflow/Cosmos builds its own
+# profile from the snowflake_default connection and ignores this file. No secrets here: the
+# account and private key come from environment variables set from Secrets Manager.
+retail:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: RETAIL_SVC
+      private_key: "{{ env_var('SNOWFLAKE_PRIVATE_KEY') }}"
+      role: RETAIL_ROLE
+      warehouse: RETAIL_WH
+      database: RETAIL
+      schema: STAGING
+      threads: 4

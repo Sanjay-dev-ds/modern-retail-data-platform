@@ -2,7 +2,7 @@ TF_DIR := infra/terraform
 TF_OUT  = terraform -chdir=$(TF_DIR) output -raw
 
 .PHONY: tf-fmt tf-init tf-validate tf-plan tf-apply tf-destroy \
-        dms-start dms-resume dms-stop ssm airflow-ui ec2-start ec2-stop
+        dms-start dms-resume dms-stop ssm airflow-ui dbt-docs ec2-start ec2-stop
 
 tf-fmt:
 	terraform -chdir=$(TF_DIR) fmt -recursive
@@ -39,6 +39,11 @@ ssm:
 # Tunnel the Airflow UI to http://localhost:8080 (keep running while you use the UI)
 airflow-ui:
 	$$($(TF_OUT) airflow_ui_tunnel_command)
+
+# Tunnel dbt docs to http://localhost:8081. First start the server on the host:
+#   sudo bash /opt/retail/scripts/dbt_docs.sh
+dbt-docs:
+	aws ssm start-session --target $$($(TF_OUT) instance_id) --document-name AWS-StartPortForwardingSession --parameters portNumber=8081,localPortNumber=8081
 
 ec2-start:
 	aws ec2 start-instances --instance-ids $$($(TF_OUT) instance_id)
