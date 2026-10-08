@@ -3,8 +3,9 @@ version: 2
 sources:
   - name: raw
     description: >
-      Landing tables loaded hourly by Airflow (COPY INTO from S3). POS and clickstream rows are
-      whole records in `record` (VARIANT); `_file` is the S3 file, `_loaded_at` the load time.
+      Landing tables in RETAIL.RAW, loaded hourly by Airflow (COPY INTO from the S3 stages).
+      Files already loaded are skipped, so reloading is safe. POS and clickstream rows land whole
+      in `record` (VARIANT, schema-on-read); the catalog CSV is loaded by column name.
     database: RETAIL
     schema: RAW
     config:
@@ -14,20 +15,97 @@ sources:
         error_after: {count: 12, period: hour}
     tables:
       - name: pos_stores
-        description: DMS full load + CDC of pos.stores. record has Op (I/U/D) and _dms_commit_ts.
+        description: |
+
+          - **Grain:** one row per CDC event (full-load row or change) on `pos.stores`.
+          - **Delivered by:** DMS from RDS, Parquet under `s3://…/pos/pos/stores/`.
+          `record` fields: `store_id`, `store_name`, `region`, `format`, `open_date`,
+          `updated_at`, `Op` (I/U/D), `_dms_commit_ts`.
+        columns: &variant_columns
+          - name: record
+            description: The full source row as VARIANT (see the table description for its fields).
+          - name: _file
+            description: "{{ doc('col__file') }}"
+          - name: _loaded_at
+            description: "{{ doc('col__loaded_at') }}"
+
       - name: pos_customers
-        description: DMS full load + CDC of pos.customers.
+        description: |
+
+          - **Grain:** one row per CDC event on `pos.customers` (loyalty members; PII).
+          `record` fields: `customer_id`, `email`, `phone`, `loyalty_tier`, `home_store_id`,
+          `signup_at`, `updated_at`, `Op`, `_dms_commit_ts`.
+        columns: *variant_columns
+
       - name: pos_transactions
-        description: DMS full load + CDC of pos.transactions (order headers).
+        description: |
+
+          - **Grain:** one row per CDC event on `pos.transactions` (sale headers). A sale typically
+          has an insert, then possibly an update (void / return) and rarely a delete.
+          `record` fields: `transaction_id`, `store_id`, `customer_id`, `channel`, `txn_ts`,
+          `status`, `total_amount`, `currency`, `created_at`, `updated_at`, `Op`, `_dms_commit_ts`.
+        columns: *variant_columns
+
       - name: pos_transaction_lines
-        description: DMS full load + CDC of pos.transaction_lines (one product per sale).
+        description: |
+
+          - **Grain:** one row per CDC event on `pos.transaction_lines` (products on a sale).
+          Lines are inserted with the sale and only ever deleted with it.
+          `record` fields: `transaction_id`, `line_no`, `sku`, `quantity`, `unit_price`,
+          `discount_amount`, `promo_code`, `Op`, `_dms_commit_ts`.
+        columns: *variant_columns
+
       - name: pos_payments
-        description: DMS full load + CDC of pos.payments (tenders; split payments = several rows).
+        description: |
+
+          - **Grain:** one row per CDC event on `pos.payments` (tenders). Split-tender sales have
+          several payments; voids and returns add negative refund rows.
+          `record` fields: `payment_id`, `transaction_id`, `method`, `amount`, `created_at`,
+          `Op`, `_dms_commit_ts`.
+        columns: *variant_columns
+
       - name: clickstream_events
-        description: Web/app events from Kinesis Firehose. At-least-once, so duplicates exist.
+        description: |
+
+          - **Grain:** one row per delivered event. Firehose is at-least-once, so an event can be
+          delivered twice (planted duplicate defect).
+          `record` fields: `event_id`, `event_type`, `event_ts`, `session_id`, `anonymous_id`,
+          `customer_id`, `page_url`, `sku`, `quantity`, `order_id`, `device`, `utm_source`,
+          `utm_medium`, `utm_campaign`, `schema_version`.
+        columns: *variant_columns
+
       - name: catalog_products
-        description: Supplier's daily full catalog snapshot (CSV, loaded by column name).
+        description: |
+
+          - **Grain:** one row per SKU per daily snapshot file (full snapshot every day).
+          Loaded by column name, so the supplier adding a column (`pack_size`, planted schema
+          drift) does not break the load.
         config:
           freshness:  # one file per day
             warn_after: {count: 26, period: hour}
             error_after: {count: 50, period: hour}
+        columns:
+          - name: sku
+            description: "{{ doc('col_sku') }}"
+          - name: product_name
+            description: Product name as the supplier lists it.
+          - name: brand
+            description: Brand.
+          - name: category
+            description: "Top level of the product hierarchy: grocery, household, personal_care, electronics, apparel."
+          - name: subcategory
+            description: Second level of the product hierarchy, e.g. snacks, laundry, audio.
+          - name: unit_cost
+            description: Supplier cost per unit on the snapshot date.
+          - name: list_price
+            description: Shelf price on the snapshot date.
+          - name: is_active
+            description: False once the supplier discontinued the product (the row stays in later files).
+          - name: supplier_updated_at
+            description: When the supplier last changed this row (UTC).
+          - name: pack_size
+            description: Added by the supplier without notice from the schema-drift day on; null before.
+          - name: _file
+            description: "{{ doc('col__file') }} Contains the snapshot date (`dt=YYYY-MM-DD/`)."
+          - name: _loaded_at
+            description: "{{ doc('col__loaded_at') }}"

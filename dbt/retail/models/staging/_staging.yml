@@ -1,69 +1,228 @@
 version: 2
 
-# Planted source defects (docs/source-contracts.md) are tested with severity: warn, so they are
-# reported in every run without failing the pipeline. Structural guarantees are errors.
+# Staging: typed views over RAW. One row per business key (latest CDC version) unless the model
+# is a *_cdc history view. Planted source defects are tested with severity: warn.
 
 models:
+  # ------------------------------------------------------------------ stores
   - name: stg_pos__stores_cdc
-    description: Every replicated version of every store (full-load row plus each CDC change).
-  - name: stg_pos__stores
-    description: Current state of each store. store_id 0 is the online shop.
+    description: |
+      Every replicated version of every store: the DMS full-load row plus each CDC change.
+
+      - **Grain:** one row per store per CDC event.
+      - **Primary key:** none (`store_id` repeats per version).
+      - **Source:** `raw.pos_stores`.
+      - **Used by:** `dim_store` (SCD2).
+    config:
+      meta: {grain: "store x CDC event", primary_key: "none (history)", layer: staging}
     columns:
       - name: store_id
-        data_tests: [unique, not_null]
+        description: "{{ doc('col_store_id') }}"
+      - name: store_name
+        description: Store name, e.g. "Springfield Express".
+      - name: region
+        description: "{{ doc('col_region') }}"
+      - name: format
+        description: "{{ doc('col_format') }}"
+      - name: open_date
+        description: Date the store opened.
+      - name: updated_at
+        description: Last change in the source system.
+      - name: is_deleted
+        description: "{{ doc('col_is_deleted') }}"
+      - name: _dms_commit_ts
+        description: "{{ doc('col__dms_commit_ts') }}"
+      - name: _file
+        description: "{{ doc('col__file') }}"
+      - name: _loaded_at
+        description: "{{ doc('col__loaded_at') }}"
 
+  - name: stg_pos__stores
+    description: |
+      Current state of each store (latest CDC version).
+
+      - **Grain:** one row per store.
+      - **Primary key:** `store_id`.
+      - **Source:** `stg_pos__stores_cdc`.
+    config:
+      meta: {grain: "store", primary_key: "store_id", layer: staging}
+    columns:
+      - name: store_id
+        description: "{{ doc('col_store_id') }}"
+        data_tests: [unique, not_null]
+      - name: store_name
+        description: Store name, e.g. "Springfield Express".
+      - name: region
+        description: "{{ doc('col_region') }}"
+      - name: format
+        description: "{{ doc('col_format') }}"
+      - name: open_date
+        description: Date the store opened.
+      - name: updated_at
+        description: Last change in the source system.
+      - name: is_deleted
+        description: "{{ doc('col_is_deleted') }}"
+      - name: _dms_commit_ts
+        description: "{{ doc('col__dms_commit_ts') }}"
+      - name: _file
+        description: "{{ doc('col__file') }}"
+      - name: _loaded_at
+        description: "{{ doc('col__loaded_at') }}"
+
+  # ------------------------------------------------------------------ customers
   - name: stg_pos__customers_cdc
-    description: Every replicated version of every loyalty customer.
-  - name: stg_pos__customers
-    description: Current state of each loyalty customer. email and phone are PII.
+    description: |
+      Every replicated version of every loyalty customer (sign-up, tier changes, email fixes).
+
+      - **Grain:** one row per customer per CDC event.
+      - **Primary key:** none (history).
+      - **Source:** `raw.pos_customers`.
+      - **Used by:** `dim_customer` (SCD2). Contains PII.
+    config:
+      meta: {grain: "customer x CDC event", primary_key: "none (history)", layer: staging, contains_pii: true}
     columns:
       - name: customer_id
+        description: "{{ doc('col_customer_id') }}"
+      - name: email
+        description: "{{ doc('col_email') }}"
+      - name: phone
+        description: Customer phone number (PII).
+      - name: loyalty_tier
+        description: "{{ doc('col_loyalty_tier') }}"
+      - name: home_store_id
+        description: Store where the customer signed up.
+      - name: signup_at
+        description: When the customer joined the loyalty programme.
+      - name: updated_at
+        description: Last change in the source system.
+      - name: is_deleted
+        description: "{{ doc('col_is_deleted') }}"
+      - name: _dms_commit_ts
+        description: "{{ doc('col__dms_commit_ts') }}"
+      - name: _file
+        description: "{{ doc('col__file') }}"
+      - name: _loaded_at
+        description: "{{ doc('col__loaded_at') }}"
+
+  - name: stg_pos__customers
+    description: |
+      Current state of each loyalty customer (latest CDC version).
+
+      - **Grain:** one row per customer.
+      - **Primary key:** `customer_id`.
+      - **Source:** `stg_pos__customers_cdc`. Contains PII (email, phone).
+    config:
+      meta: {grain: "customer", primary_key: "customer_id", layer: staging, contains_pii: true}
+    columns:
+      - name: customer_id
+        description: "{{ doc('col_customer_id') }}"
         data_tests: [unique, not_null]
       - name: email
-        description: Nullable; some sign-ups skip it (planted null_values defect).
+        description: "{{ doc('col_email') }}"
         data_tests:
           - not_null:
               config:
                 severity: warn
                 where: "not is_deleted"
+      - name: phone
+        description: Customer phone number (PII).
+      - name: loyalty_tier
+        description: "{{ doc('col_loyalty_tier') }}"
+      - name: home_store_id
+        description: Store where the customer signed up.
+      - name: signup_at
+        description: When the customer joined the loyalty programme.
+      - name: updated_at
+        description: Last change in the source system.
+      - name: is_deleted
+        description: "{{ doc('col_is_deleted') }}"
+      - name: _dms_commit_ts
+        description: "{{ doc('col__dms_commit_ts') }}"
+      - name: _file
+        description: "{{ doc('col__file') }}"
+      - name: _loaded_at
+        description: "{{ doc('col__loaded_at') }}"
 
+  # ------------------------------------------------------------------ transactions
   - name: stg_pos__transactions
-    description: Order headers, latest version per transaction_id. Grain - one sale.
+    description: |
+      Sale headers, current state. A CDC batch can hold several versions of one sale (insert,
+      then void); the latest wins.
+
+      - **Grain:** one row per sale.
+      - **Primary key:** `transaction_id`.
+      - **Source:** `raw.pos_transactions`.
+    config:
+      meta: {grain: "sale (transaction)", primary_key: "transaction_id", layer: staging}
     columns:
       - name: transaction_id
+        description: "{{ doc('col_transaction_id') }}"
         data_tests: [unique, not_null]
+      - name: store_id
+        description: "{{ doc('col_store_id') }}"
+      - name: customer_id
+        description: "{{ doc('col_customer_id') }} Online orders should always have one (planted defect)."
+        data_tests:
+          - not_null:
+              config:
+                severity: warn
+                where: "channel = 'online' and not is_deleted"
       - name: channel
+        description: "{{ doc('col_channel') }}"
         data_tests:
           - accepted_values:
               arguments:
                 values: [store, online]
               config:
                 where: "not is_deleted"
+      - name: txn_ts
+        description: "{{ doc('col_txn_ts') }}"
       - name: status
-        description: completed -> voided (minutes later) or returned (days later).
+        description: "{{ doc('col_status') }}"
         data_tests:
           - accepted_values:
               arguments:
                 values: [completed, voided, returned]
               config:
                 where: "not is_deleted"
-      - name: customer_id
-        description: Null = anonymous. Online orders should always have one (planted defect).
-        data_tests:
-          - not_null:
-              config:
-                severity: warn
-                where: "channel = 'online' and not is_deleted"
+      - name: total_amount
+        description: Sale total = sum over lines of quantity × unit_price − discount_amount.
+      - name: currency
+        description: ISO currency code (always USD).
+      - name: updated_at
+        description: Last change in the source system (e.g. the void or return time).
+      - name: is_deleted
+        description: "{{ doc('col_is_deleted') }}"
+      - name: _dms_commit_ts
+        description: "{{ doc('col__dms_commit_ts') }}"
+      - name: _file
+        description: "{{ doc('col__file') }}"
+      - name: _loaded_at
+        description: "{{ doc('col__loaded_at') }}"
 
   - name: stg_pos__transaction_lines
-    description: Order lines, latest version. Grain - one product on one transaction.
+    description: |
+      Products on a sale, current state. Lines never change after the sale; they are only
+      deleted together with their transaction.
+
+      - **Grain:** one row per product on a sale.
+      - **Primary key:** `transaction_id`, `line_no`.
+      - **Source:** `raw.pos_transaction_lines`.
+    config:
+      meta: {grain: "product on a sale (line)", primary_key: "transaction_id, line_no", layer: staging}
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
             combination_of_columns: [transaction_id, line_no]
     columns:
+      - name: transaction_id
+        description: "{{ doc('col_transaction_id') }}"
+      - name: line_no
+        description: Line number within the sale, starting at 1.
+      - name: sku
+        description: "{{ doc('col_sku') }}"
       - name: quantity
-        description: Should be positive; 0 / -1 are planted invalid values.
+        description: Units sold. Should be positive; 0 or -1 are planted invalid values.
         data_tests:
           - dbt_utils.expression_is_true:
               arguments:
@@ -71,40 +230,153 @@ models:
               config:
                 severity: warn
                 where: "not is_deleted"
+      - name: unit_price
+        description: "{{ doc('col_unit_price') }} 0 is a planted invalid value."
+      - name: discount_amount
+        description: Promotion discount on the whole line (not per unit). 0 without a promotion.
+      - name: promo_code
+        description: Promotion applied to the line (SAVE10, WEEKEND15, LOYAL20); null if none.
+      - name: is_deleted
+        description: "{{ doc('col_is_deleted') }}"
+      - name: _dms_commit_ts
+        description: "{{ doc('col__dms_commit_ts') }}"
+      - name: _file
+        description: "{{ doc('col__file') }}"
+      - name: _loaded_at
+        description: "{{ doc('col__loaded_at') }}"
 
   - name: stg_pos__payments
-    description: Tenders, latest version. Grain - one payment; several per split-tender sale.
+    description: |
+      Tenders, current state. Split-tender sales have several rows; voids and returns add one
+      negative refund row per original tender.
+
+      - **Grain:** one row per payment or refund.
+      - **Primary key:** `payment_id`.
+      - **Source:** `raw.pos_payments`.
+    config:
+      meta: {grain: "payment / refund", primary_key: "payment_id", layer: staging}
     columns:
       - name: payment_id
+        description: Payment identifier, UUID.
         data_tests: [unique, not_null]
+      - name: transaction_id
+        description: "{{ doc('col_transaction_id') }}"
       - name: method
+        description: "{{ doc('col_payment_method') }}"
         data_tests:
           - accepted_values:
               arguments:
                 values: [card, cash, wallet, gift_card]
               config:
                 where: "not is_deleted"
+      - name: amount
+        description: Amount tendered. Negative = refund of a voided or returned sale.
+      - name: created_at
+        description: When the payment (or refund) was taken.
+      - name: is_deleted
+        description: "{{ doc('col_is_deleted') }}"
+      - name: _dms_commit_ts
+        description: "{{ doc('col__dms_commit_ts') }}"
+      - name: _file
+        description: "{{ doc('col__file') }}"
+      - name: _loaded_at
+        description: "{{ doc('col__loaded_at') }}"
 
+  # ------------------------------------------------------------------ clickstream
   - name: stg_clickstream__events
-    description: Clickstream events deduplicated on event_id (Firehose is at-least-once).
+    description: |
+      Web and app events, deduplicated on `event_id` (Firehose is at-least-once; the first copy
+      loaded is kept).
+
+      - **Grain:** one row per event.
+      - **Primary key:** `event_id`.
+      - **Source:** `raw.clickstream_events`.
+    config:
+      meta: {grain: "clickstream event", primary_key: "event_id", layer: staging}
     columns:
       - name: event_id
+        description: Event identifier, UUID.
         data_tests: [unique, not_null]
       - name: event_type
+        description: "Funnel step: page_view, product_view, add_to_cart, checkout_started, purchase."
         data_tests:
           - accepted_values:
               arguments:
                 values: [page_view, product_view, add_to_cart, checkout_started, purchase]
       - name: event_ts
-        description: Device time (UTC). Use this, not the S3 dt=/hh= partition (arrival time).
+        description: >
+          Device time of the event (UTC). Use this, not the S3 dt=/hh= partition, which is the
+          arrival time; late events arrive up to ~6 hours after event_ts.
         data_tests: [not_null]
+      - name: session_id
+        description: Browsing session, UUID. Also the Kinesis partition key.
+      - name: anonymous_id
+        description: Device / browser cookie, stable across sessions of the same device.
+      - name: customer_id
+        description: "{{ doc('col_customer_id') }} Set once the visitor logs in."
+      - name: page_url
+        description: Page of the event, e.g. /, /category/grocery, /product/SKU-00042, /checkout.
+      - name: sku
+        description: Product of product_view and add_to_cart events; null otherwise.
+      - name: quantity
+        description: Units added, for add_to_cart events.
+      - name: order_id
+        description: Purchase events only; equals the POS `transaction_id` of the online order.
+      - name: device
+        description: web, ios, android.
+      - name: utm_source
+        description: Marketing source of the session (first event only), e.g. google, newsletter.
+      - name: utm_medium
+        description: Marketing medium (first event only), e.g. cpc, email, paid_social.
+      - name: utm_campaign
+        description: Marketing campaign (first event only).
+      - name: schema_version
+        description: Event schema version (1).
+      - name: _file
+        description: "{{ doc('col__file') }}"
+      - name: _loaded_at
+        description: "{{ doc('col__loaded_at') }}"
 
+  # ------------------------------------------------------------------ catalog
   - name: stg_catalog__products
-    description: One row per SKU per daily supplier snapshot.
+    description: |
+      The supplier's daily catalog snapshots, typed, with the snapshot date taken from the file
+      path.
+
+      - **Grain:** one row per SKU per snapshot date.
+      - **Primary key:** `sku`, `snapshot_date`.
+      - **Source:** `raw.catalog_products`.
+      - **Used by:** `dim_product` (SCD2).
+    config:
+      meta: {grain: "SKU x snapshot date", primary_key: "sku, snapshot_date", layer: staging}
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
             combination_of_columns: [sku, snapshot_date]
     columns:
+      - name: sku
+        description: "{{ doc('col_sku') }}"
+      - name: product_name
+        description: Product name as the supplier lists it.
+      - name: brand
+        description: Brand.
+      - name: category
+        description: "Top level of the product hierarchy: grocery, household, personal_care, electronics, apparel."
+      - name: subcategory
+        description: Second level of the product hierarchy.
+      - name: unit_cost
+        description: Supplier cost per unit on the snapshot date.
+      - name: list_price
+        description: Shelf price on the snapshot date.
+      - name: is_active
+        description: False once discontinued.
+      - name: supplier_updated_at
+        description: When the supplier last changed this row (UTC).
       - name: pack_size
-        description: Added by the supplier without notice from schema_drift_day on.
+        description: Added by the supplier without notice from the schema-drift day on; null before.
+      - name: snapshot_date
+        description: Date of the snapshot file (from `dt=YYYY-MM-DD` in the path).
+      - name: _file
+        description: "{{ doc('col__file') }}"
+      - name: _loaded_at
+        description: "{{ doc('col__loaded_at') }}"

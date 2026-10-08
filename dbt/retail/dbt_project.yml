@@ -17,6 +17,11 @@ vars:
 
 models:
   retail:
+    # Write model and column descriptions to Snowflake as comments, so the data dictionary is
+    # also visible in Snowsight (and to BI tools reading the catalog).
+    +persist_docs:
+      relation: true
+      columns: true
     staging:
       +schema: staging
       +materialized: view

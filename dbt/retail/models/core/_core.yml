@@ -1,77 +1,223 @@
 version: 2
 
+# Core: star schema. SCD2 dimensions with sequential integer surrogate keys (-1 = Unknown) and
+# facts at a stated grain. Structural tests are errors; planted defects warn.
+
 models:
+  # ================================================================== dimensions
   - name: dim_date
-    description: Calendar, one row per day from 2025-01-01 to one year ahead.
+    description: |
+      Calendar from a date spine (2025-01-01 to one year ahead).
+
+      - **Grain:** one row per day.
+      - **Primary key:** `date_sk` (integer YYYYMMDD).
+      - **Refresh:** full rebuild each run.
+    config:
+      meta: {grain: "calendar day", primary_key: "date_sk", layer: core, type: dimension}
     columns:
       - name: date_sk
-        description: Integer key YYYYMMDD (the accepted smart-key exception for dates).
+        description: Integer date key in YYYYMMDD form (the accepted smart-key exception for dates).
         data_tests: [unique, not_null]
       - name: date_day
+        description: The calendar date.
         data_tests: [unique, not_null]
+      - name: year
+        description: Calendar year.
+      - name: quarter
+        description: Calendar quarter (1-4).
+      - name: month
+        description: Month number (1-12).
+      - name: month_name
+        description: Month name, abbreviated (Jan, Feb, …).
+      - name: week_of_year
+        description: Week number in the year.
+      - name: day_of_week
+        description: ISO day of week, 1 = Monday … 7 = Sunday.
+      - name: day_name
+        description: Day name, abbreviated (Mon, Tue, …).
+      - name: is_weekend
+        description: True on Saturday and Sunday.
 
   - name: dim_store
-    description: >
-      SCD2 store dimension from the CDC history. Incremental merge: store_sk is a sequential
-      integer assigned once per version and never changed; -1 is the Unknown member.
-      Point-in-time join: store_id match and valid_from <= txn_ts < valid_to (null = current).
+    description: |
+      SCD2 store dimension built from the CDC history: a new version only when a tracked
+      attribute (name, region, format, open date) changes.
+
+      - **Grain:** one row per store version.
+      - **Primary key:** `store_sk`.
+      - **Natural key:** `store_id` + `version_ts`.
+      - **Refresh:** incremental merge. Stores with new CDC rows get their version chain rebuilt;
+      existing versions keep their key and get `valid_to` / `is_current` updated.
+      - **Use:** join facts on `store_sk`, or on `store_id` with valid_from ≤ event time < valid_to.
+    config:
+      meta: {grain: "store version (SCD2)", primary_key: "store_sk", natural_key: "store_id, version_ts", layer: core, type: dimension}
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
             combination_of_columns: [store_id, version_ts]
     columns:
       - name: store_sk
-        description: Surrogate key - meaningless sequential integer (-1 = Unknown).
+        description: "{{ doc('col_surrogate_key') }}"
         data_tests: [unique, not_null]
+      - name: store_id
+        description: "{{ doc('col_store_id') }} -1 for the Unknown member."
+      - name: store_name
+        description: Store name.
+      - name: region
+        description: "{{ doc('col_region') }}"
+      - name: format
+        description: "{{ doc('col_format') }}"
+      - name: open_date
+        description: Date the store opened.
+      - name: version_ts
+        description: "{{ doc('col_version_ts') }}"
       - name: valid_from
-        description: First version starts 1900-01-01 (history before the DMS full load is unknown).
+        description: "{{ doc('col_valid_from') }}"
+      - name: valid_to
+        description: "{{ doc('col_valid_to') }}"
+      - name: is_current
+        description: "{{ doc('col_is_current') }}"
+      - name: _loaded_at
+        description: "{{ doc('col__loaded_at') }}"
 
   - name: dim_customer
-    description: >
-      SCD2 loyalty customer dimension (tier upgrades, email fixes) from the CDC history.
-      Same keying as dim_store; -1 = Unknown (anonymous sales point here).
+    description: |
+      SCD2 loyalty customer dimension from the CDC history (sign-ups, tier changes, email fixes).
+
+      - **Grain:** one row per customer version.
+      - **Primary key:** `customer_sk`.
+      - **Natural key:** `customer_id` + `version_ts`.
+      - **Refresh:** incremental merge, same pattern as `dim_store`.
+      - **Use:** anonymous sales (no loyalty card) point at the Unknown member (-1). Contains PII.
+    config:
+      meta: {grain: "customer version (SCD2)", primary_key: "customer_sk", natural_key: "customer_id, version_ts", layer: core, type: dimension, contains_pii: true}
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
             combination_of_columns: [customer_id, version_ts]
     columns:
       - name: customer_sk
-        description: Surrogate key - meaningless sequential integer (-1 = Unknown).
+        description: "{{ doc('col_surrogate_key') }}"
         data_tests: [unique, not_null]
+      - name: customer_id
+        description: "{{ doc('col_customer_id') }} -1 for the Unknown member."
+      - name: email
+        description: "{{ doc('col_email') }}"
+      - name: phone
+        description: Customer phone number (PII).
       - name: loyalty_tier
+        description: "{{ doc('col_loyalty_tier') }} `unknown` for the Unknown member."
         data_tests:
           - accepted_values:
               arguments:
                 values: [bronze, silver, gold, unknown]
+      - name: home_store_id
+        description: Store where the customer signed up.
+      - name: signup_at
+        description: When the customer joined the loyalty programme.
+      - name: version_ts
+        description: "{{ doc('col_version_ts') }}"
+      - name: valid_from
+        description: "{{ doc('col_valid_from') }}"
+      - name: valid_to
+        description: "{{ doc('col_valid_to') }}"
+      - name: is_current
+        description: "{{ doc('col_is_current') }}"
+      - name: _loaded_at
+        description: "{{ doc('col__loaded_at') }}"
 
   - name: dim_product
-    description: >
-      SCD2 product dimension from consecutive daily supplier snapshots (price, active flag).
-      Same keying as dim_store; -1 = Unknown (sales lines with an orphan SKU point here).
+    description: |
+      SCD2 product dimension from the supplier's daily full snapshots: consecutive days are
+      compared and a new version opens only when an attribute changed (price, cost, active
+      flag, names, hierarchy).
+
+      - **Grain:** one row per SKU version.
+      - **Primary key:** `product_sk`.
+      - **Natural key:** `sku` + `version_date`.
+      - **Refresh:** incremental merge, same pattern as `dim_store`.
+      - **Use:** sales lines with an SKU missing from every catalog file point at Unknown (-1).
+    config:
+      meta: {grain: "product version (SCD2)", primary_key: "product_sk", natural_key: "sku, version_date", layer: core, type: dimension}
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
             combination_of_columns: [sku, version_date]
     columns:
       - name: product_sk
-        description: Surrogate key - meaningless sequential integer (-1 = Unknown).
+        description: "{{ doc('col_surrogate_key') }}"
         data_tests: [unique, not_null]
+      - name: sku
+        description: "{{ doc('col_sku') }} `UNKNOWN` for the Unknown member."
+      - name: product_name
+        description: Product name.
+      - name: brand
+        description: Brand.
+      - name: category
+        description: Top level of the product hierarchy.
+      - name: subcategory
+        description: Second level of the product hierarchy.
+      - name: unit_cost
+        description: Supplier cost per unit during this version.
+      - name: list_price
+        description: Shelf price during this version.
+      - name: is_active
+        description: False once discontinued.
+      - name: pack_size
+        description: Pack size, from the schema-drift day on (null before).
+      - name: version_date
+        description: Snapshot date on which this version first appeared.
+      - name: valid_from
+        description: "{{ doc('col_valid_from') }}"
+      - name: valid_to
+        description: "{{ doc('col_valid_to') }}"
+      - name: is_current
+        description: "{{ doc('col_is_current') }}"
+      - name: _loaded_at
+        description: "{{ doc('col__loaded_at') }}"
 
+  # ================================================================== facts
   - name: fct_sales_lines
-    description: >
-      Sales fact, grain = one product on one transaction. Incremental merge; status changes on
-      the header (voids, returns) re-merge the transaction's lines. Hard-deleted transactions
-      stay with is_deleted = true - filter them out in reporting. Dimension keys are never
-      null: -1 points at the Unknown member.
+    description: |
+      Sales fact.
+
+      - **Grain:** one row per product on a sale (transaction line).
+      - **Primary key:** `transaction_id`, `line_no`.
+      - **Refresh:** incremental merge. Every sale whose header *or* lines were loaded since the
+      last run (minus a 1-hour lookback) is re-merged, so voids and returns (header updates)
+      update their lines' `status`.
+      - **Use:** revenue, units, discounts. Filter `not is_deleted`. Dimension keys are the
+      version valid at `txn_ts` and are never null (-1 = Unknown). Do not join to
+      `fct_payments` (fan-out).
+    config:
+      meta: {grain: "product on a sale (line)", primary_key: "transaction_id, line_no", layer: core, type: fact}
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
             combination_of_columns: [transaction_id, line_no]
     columns:
-      - name: net_amount
-        description: quantity * unit_price - discount_amount.
+      - name: transaction_id
+        description: "{{ doc('col_transaction_id') }}"
+      - name: line_no
+        description: Line number within the sale, starting at 1.
+      - name: txn_ts
+        description: "{{ doc('col_txn_ts') }}"
+        data_tests:
+          - not_null:
+              config:
+                where: "not is_deleted"
+      - name: txn_date
+        description: Date of `txn_ts`.
+      - name: store_id
+        description: "{{ doc('col_store_id') }}"
+      - name: customer_id
+        description: "{{ doc('col_customer_id') }}"
+      - name: channel
+        description: "{{ doc('col_channel') }}"
+      - name: status
+        description: "{{ doc('col_status') }}"
       - name: sku
-        description: Orphan SKUs (not in any catalog file) are a planted defect; their product_sk is -1.
+        description: "{{ doc('col_sku') }} Orphan SKUs get product_sk -1."
         data_tests:
           - relationships:
               arguments:
@@ -80,18 +226,31 @@ models:
               config:
                 severity: warn
                 where: "not is_deleted"
-      - name: txn_ts
-        data_tests:
-          - not_null:
-              config:
-                where: "not is_deleted"
+      - name: quantity
+        description: Units sold.
+      - name: unit_price
+        description: "{{ doc('col_unit_price') }}"
+      - name: discount_amount
+        description: Promotion discount on the line.
+      - name: promo_code
+        description: Promotion applied to the line; null if none.
+      - name: gross_amount
+        description: quantity × unit_price.
+      - name: net_amount
+        description: gross_amount − discount_amount. The revenue measure.
+      - name: is_deleted
+        description: "{{ doc('col_is_deleted') }}"
+      - name: _loaded_at
+        description: Latest load time of the line or its header (the incremental watermark).
       - name: txn_date_sk
+        description: Date key of the sale → dim_date.date_sk.
         data_tests:
           - relationships:
               arguments:
                 to: ref('dim_date')
                 field: date_sk
       - name: product_sk
+        description: Product version valid on the sale date → dim_product. -1 = orphan SKU.
         data_tests:
           - not_null
           - relationships:
@@ -99,6 +258,7 @@ models:
                 to: ref('dim_product')
                 field: product_sk
       - name: customer_sk
+        description: Customer version valid at txn_ts → dim_customer. -1 = anonymous / unknown.
         data_tests:
           - not_null
           - relationships:
@@ -106,6 +266,7 @@ models:
                 to: ref('dim_customer')
                 field: customer_sk
       - name: store_sk
+        description: Store version valid at txn_ts → dim_store. -1 = unknown.
         data_tests:
           - not_null
           - relationships:
@@ -114,25 +275,96 @@ models:
                 field: store_sk
 
   - name: fct_payments
-    description: >
-      Payment fact, grain = one tender. Refunds for voided/returned sales are negative rows
-      (is_refund), one per original tender. Never join to fct_sales_lines (fan-out).
+    description: |
+      Payment fact, including refunds.
+
+      - **Grain:** one row per tender: a payment, or a refund (negative amount) written when the
+      sale is voided or returned, one per original tender.
+      - **Primary key:** `payment_id`.
+      - **Refresh:** incremental merge on payments or headers loaded since the last run.
+      - **Use:** cash flow by method; reconciliation with sale totals. Kept separate from
+      `fct_sales_lines`, because joining payments to lines fans out and double counts.
+    config:
+      meta: {grain: "payment / refund", primary_key: "payment_id", layer: core, type: fact}
     columns:
       - name: payment_id
+        description: Payment identifier, UUID.
         data_tests: [unique, not_null]
+      - name: transaction_id
+        description: "{{ doc('col_transaction_id') }}"
+      - name: method
+        description: "{{ doc('col_payment_method') }}"
+      - name: amount
+        description: Amount tendered; negative for a refund.
+      - name: is_refund
+        description: True when amount < 0 (refund of a voided or returned sale).
       - name: transaction_total
-        description: The sale's total_amount from the header, for the payments reconciliation test.
+        description: The sale's total_amount from the header, for reconciliation.
+      - name: txn_ts
+        description: "{{ doc('col_txn_ts') }}"
+      - name: txn_date
+        description: Date of `txn_ts`.
+      - name: store_id
+        description: "{{ doc('col_store_id') }}"
+      - name: channel
+        description: "{{ doc('col_channel') }}"
+      - name: status
+        description: "{{ doc('col_status') }}"
+      - name: is_deleted
+        description: "{{ doc('col_is_deleted') }}"
+      - name: _loaded_at
+        description: Latest load time of the payment or its header (the incremental watermark).
 
   - name: fct_sessions
-    description: >
-      Web session fact, grain = one session, with funnel flags. Incremental on _loaded_at so late
-      events re-aggregate their session. order_id joins to fct_sales_lines.transaction_id.
+    description: |
+      Web / app session fact with funnel flags.
+
+      - **Grain:** one row per browsing session.
+      - **Primary key:** `session_id`.
+      - **Refresh:** incremental merge. The watermark is `_loaded_at`, so a late event (a phone
+      that was offline) re-aggregates its whole session; 6-hour lookback.
+      - **Use:** funnel and conversion analysis. `order_id` joins to fct_sales_lines.transaction_id.
+    config:
+      meta: {grain: "browsing session", primary_key: "session_id", layer: core, type: fact}
     columns:
       - name: session_id
+        description: Browsing session, UUID.
         data_tests: [unique, not_null]
+      - name: anonymous_id
+        description: Device / browser cookie.
+      - name: customer_id
+        description: "{{ doc('col_customer_id') }} Known once the visitor logged in."
+      - name: session_start
+        description: First event time in the session (UTC).
+      - name: session_end
+        description: Last event time in the session (UTC).
+      - name: duration_seconds
+        description: session_end − session_start, in seconds.
+      - name: events
+        description: Number of (deduplicated) events in the session.
+      - name: device
+        description: web, ios, android.
+      - name: utm_source
+        description: Marketing source of the session.
+      - name: utm_medium
+        description: Marketing medium of the session.
+      - name: utm_campaign
+        description: Marketing campaign of the session.
+      - name: viewed_product
+        description: The session reached a product page.
+      - name: added_to_cart
+        description: The session added something to the cart.
+      - name: started_checkout
+        description: The session started checkout.
+      - name: purchased
+        description: The session ended in a purchase.
+      - name: order_id
+        description: POS transaction_id of the purchase; null if no purchase.
+      - name: _loaded_at
+        description: Latest load time of the session's events (the incremental watermark).
       - name: pos_order_found
         description: >
-          Cross-source reconciliation - false when a web purchase has no matching online POS
+          Cross-source reconciliation: false when a web purchase has no matching online POS
           transaction. DMS and Firehose land on different schedules, so a recent purchase can
           briefly have no order yet; hence warn, and only for sessions older than an hour.
         data_tests:
