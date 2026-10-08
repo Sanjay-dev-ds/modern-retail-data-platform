@@ -52,13 +52,14 @@ On first boot, user_data runs [`scripts/setup_host.sh`](scripts/setup_host.sh). 
 
 - **Airflow** runs as containers defined in [`airflow/docker-compose.yaml`](airflow/docker-compose.yaml): Airflow 3.3.2 (LocalExecutor) with a Postgres metadata DB. DAGs are read from `/opt/retail/airflow/dags`. Containers use the EC2 instance role, and connections come from Secrets Manager under `<prefix>/airflow/connections/` (`pos_db` is created by Terraform).
 - **The generator** runs directly on the host with `uv run`.
-- **Values from Terraform** (`DB_SECRET_ID`, `KINESIS_STREAM`, `RAW_BUCKET`, `DMS_TASK_ARN`, ...) are in `/etc/airflow/infra.env` and are loaded into every login shell.
+- **Settings:** Terraform writes the non-secret values (bucket, Kinesis stream, DMS task, DB secret name, repo URL) to `/etc/retail/platform.env`. `setup_host.sh`, `init_db.sh`, `retail-gen` and Airflow's `.env` read this file directly, so no shell variables are needed. Login shells also load it, for `$RAW_BUCKET`, `$DMS_TASK_ARN`, ...
+- **Secrets:** only the POS database credentials are in Secrets Manager. The Airflow keys and its metadata DB password are fixed, public values in `airflow/docker-compose.yaml`; that's deliberate for this experimental project.
 
 ## Run the generator on EC2
 
 Everything below runs **on the EC2 host**, not on your laptop.
 
-**1. Open a shell on the host.** Either run `make ssm` from your laptop, or in the AWS console go to EC2 → `retail-data-platform-dev-platform` → Connect → Session Manager. Then switch to a root login shell, which loads the Terraform values:
+**1. Open a shell on the host.** Either run `make ssm` from your laptop, or in the AWS console go to EC2 → `retail-data-platform-dev-platform` → Connect → Session Manager. Then switch to root, because the generator's environment belongs to root:
 
 ```bash
 sudo -i
@@ -66,7 +67,7 @@ tail -n 3 /var/log/platform-setup.log
 cd /opt/retail && git pull
 ```
 
-The log should end with `[setup] done`. If `repo_url` was empty or the repo is private, clone it to `/opt/retail` yourself, then run `/usr/local/sbin/setup_host.sh`.
+The log should end with `[setup] done`. If it doesn't, run `/usr/local/sbin/setup_host.sh` again (it is idempotent) and read the error.
 
 **2. Create the POS schema** (once):
 
@@ -99,7 +100,7 @@ uv run retail-gen run --once
 
 ```bash
 systemd-run --unit retail-gen --working-directory /opt/retail/generators --setenv HOME=/root \
-  --property EnvironmentFile=/etc/airflow/infra.env /usr/local/bin/uv run --frozen retail-gen run
+  /usr/local/bin/uv run --frozen retail-gen run
 journalctl -u retail-gen -f      # follow the logs (Ctrl+C stops following, not the generator)
 systemctl stop retail-gen        # stop it
 ```
@@ -126,7 +127,7 @@ aws s3 ls "s3://$RAW_BUCKET/catalog/products/" --recursive | tail
 | Status / logs | `docker compose ps`, `docker compose logs -f airflow-scheduler` |
 | CLI | `docker compose exec airflow-scheduler airflow dags list` |
 | Deploy DAGs | `git -C /opt/retail pull` (picked up automatically) |
-| Restart / upgrade | Edit `AIRFLOW_VERSION` in `.env`, then `docker compose --env-file .env --env-file /etc/airflow/infra.env up -d` |
+| Restart / upgrade | `/usr/local/sbin/setup_host.sh` (it copies `platform.env` to `.env` and runs `docker compose up -d`). To change the version, edit `AIRFLOW_VERSION` in `/etc/retail/platform.env` first. |
 
 ## Cost control
 

@@ -1,8 +1,9 @@
 # Airflow 3 on the platform EC2 host (LocalExecutor + Postgres metadata DB).
-# Started by scripts/setup_host.sh:
-#   docker compose --env-file .env --env-file /etc/airflow/infra.env up -d
-# .env       : secrets generated once on the host (never committed)
-# infra.env  : values from Terraform (bucket, stream, DMS task, ...)
+# Started by scripts/setup_host.sh with `docker compose up -d`. ${VAR}s come from .env, a copy of
+# /etc/retail/platform.env (non-secret settings written by Terraform).
+# The Airflow keys and the metadata DB password below are fixed and public ON PURPOSE: this is
+# an experimental project, the UI is only reachable through an SSM tunnel, and the metadata DB
+# is not exposed outside Docker. Only the POS DB credentials are kept in Secrets Manager.
 # AWS access : the EC2 instance role via IMDS (instance metadata hop limit is 2 for containers).
 # UI         : 127.0.0.1:8080 on the host -> `make airflow-ui` from your machine.
 
@@ -10,15 +11,15 @@ x-airflow-common: &airflow-common
   image: apache/airflow:${AIRFLOW_VERSION:-3.3.2}
   user: "50000:0"
   environment:
+    AIRFLOW__CORE__FERNET_KEY: RGYpkdrUYunIiL1Ju7ddUmZUO2anmWgjTat5bZ-dDJU=
+    AIRFLOW__API__SECRET_KEY: retail-dev-api-secret-key
+    AIRFLOW__API_AUTH__JWT_SECRET: retail-dev-jwt-secret-change-me-if-this-ever-goes-public-facing
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY}
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
     # No login: the UI is only reachable through the SSM tunnel on localhost.
     AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "true"
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${POSTGRES_PASSWORD}@postgres/airflow
-    AIRFLOW__API__SECRET_KEY: ${AIRFLOW__API__SECRET_KEY}
-    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW__API_AUTH__JWT_SECRET}
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
     # Connections/variables from Secrets Manager, e.g. <prefix>/connections/pos_db
     AIRFLOW__SECRETS__BACKEND: airflow.providers.amazon.aws.secrets.secrets_manager.SecretsManagerBackend
     AIRFLOW__SECRETS__BACKEND_KWARGS: '{"connections_prefix": "${SECRETS_PREFIX}/connections", "variables_prefix": "${SECRETS_PREFIX}/variables"}'
@@ -40,7 +41,7 @@ services:
     image: postgres:16
     environment:
       POSTGRES_USER: airflow
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: airflow
       POSTGRES_DB: airflow
     volumes:
       - postgres-db:/var/lib/postgresql/data

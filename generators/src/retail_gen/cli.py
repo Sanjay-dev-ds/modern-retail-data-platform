@@ -1,28 +1,19 @@
 """Command line: `retail-gen seed` and `retail-gen run`. Runs on the platform EC2 host.
 
-Environment (from /etc/airflow/infra.env, loaded in login shells):
-  DB_SECRET_ID    Secrets Manager secret with the POS database credentials
-  KINESIS_STREAM  clickstream stream name
-  RAW_BUCKET      landing bucket for catalog files
+Settings (bucket, Kinesis stream, DB secret name) come from /etc/retail/platform.env,
+so it works from any shell on the host without exported variables.
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
-import os
 
 from retail_gen import runner
 from retail_gen.config import load_config
+from retail_gen.settings import load_settings
 from retail_gen.writers.events import KinesisSink
 from retail_gen.writers.objects import S3Store
-
-
-def _require(name: str) -> str:
-    value = os.environ.get(name)
-    if not value:
-        raise SystemExit(f"{name} is not set. Run on the platform host in a login shell (bash -l).")
-    return value
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -46,9 +37,12 @@ def main(argv: list[str] | None = None) -> None:
     logging.getLogger("botocore").setLevel(logging.WARNING)
 
     cfg = load_config(args.config)
-    _require("DB_SECRET_ID")
-    sinks = runner.Sinks(objects=S3Store(_require("RAW_BUCKET")),
-                         events=KinesisSink(_require("KINESIS_STREAM")))
+    settings = load_settings()
+    sinks = runner.Sinks(
+        objects=S3Store(settings["RAW_BUCKET"]),
+        events=KinesisSink(settings["KINESIS_STREAM"]),
+        db_secret_id=settings["DB_SECRET_ID"],
+    )
 
     if args.command == "seed":
         runner.seed(cfg, sinks, force=args.force)

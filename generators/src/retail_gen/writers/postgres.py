@@ -1,26 +1,18 @@
-"""PostgreSQL connection and bulk load helpers.
-
-Credentials come from the Secrets Manager secret named by DB_SECRET_ID, which the platform
-host loads from /etc/airflow/infra.env (written by Terraform) in login shells.
-"""
+"""PostgreSQL connection and bulk load helpers."""
 
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Iterable, Sequence
 
 import boto3
 import psycopg
 
 
-def connect() -> psycopg.Connection:
-    secret_id = os.environ.get("DB_SECRET_ID")
-    if not secret_id:
-        raise SystemExit("DB_SECRET_ID is not set (run on the platform host, in a login shell)")
-
+def connect(db_secret_id: str) -> psycopg.Connection:
+    """Connect with the credentials in the DB secret written by Terraform (rds.tf)."""
     secret = json.loads(
-        boto3.client("secretsmanager").get_secret_value(SecretId=secret_id)["SecretString"]
+        boto3.client("secretsmanager").get_secret_value(SecretId=db_secret_id)["SecretString"]
     )
     return psycopg.connect(
         host=secret["host"],

@@ -37,6 +37,7 @@ CATALOG_PUBLISH_TIME = dtime(6, 0)  # the supplier drops the daily file at 06:00
 class Sinks:
     objects: ObjectStore
     events: EventSink
+    db_secret_id: str
 
 
 def _party(rng: random.Random, cfg: Config, online: bool, store_ids: list[int], customer_ids: list[int]):
@@ -74,7 +75,7 @@ def seed(cfg: Config, sinks: Sinks, force: bool = False) -> None:
     start_day = now.date() - timedelta(days=cfg.scale.history_days)
     history_start = datetime.combine(start_day, dtime(0), UTC)
 
-    with connect() as conn:
+    with connect(sinks.db_secret_id) as conn:
         if pos.is_seeded(conn) or catalog_feed.latest(sinks.objects):
             if not force:
                 raise SystemExit(
@@ -189,7 +190,7 @@ def _cycle(cfg, sinks, conn, rng, picker, store_ids, customer_ids, now) -> dict:
 def run(cfg: Config, sinks: Sinks, once: bool = False) -> None:
     rng = random.Random()  # live data does not need to be reproducible
     cycle_s = cfg.targets.incremental_cycle_seconds
-    with connect() as conn:
+    with connect(sinks.db_secret_id) as conn:
         if not pos.is_seeded(conn):
             raise SystemExit("POS tables are empty. Run `retail-gen seed` first.")
         store_ids, customer_ids = pos.reference_ids(conn)

@@ -7,26 +7,28 @@ data "aws_ssm_parameter" "al2023" {
 }
 
 locals {
-  # Written to /etc/airflow/infra.env; read by setup_host.sh, docker compose and login shells.
+  # Non-secret host settings, written to /etc/retail/platform.env and read by setup_host.sh,
+  # init_db.sh, retail-gen and Airflow's docker compose. Only DB credentials live in Secrets
+  # Manager (DB_SECRET_ID points at them).
   host_env = {
     AWS_DEFAULT_REGION = var.region
-    AIRFLOW_VERSION    = var.airflow_version
-    SECRETS_PREFIX     = "${local.prefix}/airflow"
     RAW_BUCKET         = var.bucket_name
-    DB_SECRET_ID       = aws_secretsmanager_secret.db.name
     KINESIS_STREAM     = aws_kinesis_stream.clickstream.name
     DMS_TASK_ARN       = try(aws_dms_replication_task.pos[0].replication_task_arn, "")
     GLUE_CRAWLER       = aws_glue_crawler.raw.name
+    DB_SECRET_ID       = aws_secretsmanager_secret.db.name
+    SECRETS_PREFIX     = "${local.prefix}/airflow"
     REPO_URL           = var.repo_url
     REPO_BRANCH        = var.repo_branch
+    AIRFLOW_VERSION    = var.airflow_version
   }
 
   user_data = <<-EOT
     #!/bin/bash
     set -euo pipefail
     exec > >(tee -a /var/log/platform-setup.log) 2>&1
-    mkdir -p /etc/airflow
-    cat > /etc/airflow/infra.env <<'ENV'
+    mkdir -p /etc/retail
+    cat > /etc/retail/platform.env <<'ENV'
     ${join("\n", [for k, v in local.host_env : "${k}=${v}"])}
     ENV
     echo '${base64encode(file("${path.module}/../../scripts/setup_host.sh"))}' | base64 -d > /usr/local/sbin/setup_host.sh

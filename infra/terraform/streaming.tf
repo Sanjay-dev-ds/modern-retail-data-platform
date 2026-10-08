@@ -39,18 +39,13 @@ resource "aws_kinesis_firehose_delivery_stream" "clickstream" {
     buffering_interval  = 60
     compression_format  = "GZIP"
 
-    # Firehose concatenates records; this adds the newline that makes the output JSON Lines,
-    # so producers must NOT append their own.
+    # Firehose concatenates records; this adds the newline (the processor's default delimiter)
+    # that makes the output JSON Lines, so producers must NOT append their own.
     processing_configuration {
       enabled = true
 
       processors {
         type = "AppendDelimiterToRecord"
-
-        parameters {
-          parameter_name  = "Delimiter"
-          parameter_value = "\\n"
-        }
       }
     }
 

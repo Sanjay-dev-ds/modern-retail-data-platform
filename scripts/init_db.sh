@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# Run on the generator host. Creates the POS schema in RDS.
-# Requires DB_SECRET_ID (set by /etc/profile.d/retail.sh), aws cli, jq, psql.
+# Run on the platform host (any shell, any directory). Creates the POS schema in RDS.
+# DB_SECRET_ID comes from /etc/retail/platform.env; the credentials from Secrets Manager.
 set -euo pipefail
 
-: "${DB_SECRET_ID:?DB_SECRET_ID is not set}"
-SCHEMA_FILE="${1:-sql/pos/01_schema.sql}"
+set -a; source /etc/retail/platform.env; set +a
+SCHEMA_FILE="${1:-$(dirname "$0")/../sql/pos/01_schema.sql}"
 
-SECRET=$(aws secretsmanager get-secret-value --secret-id "$DB_SECRET_ID" \
-  --query SecretString --output text)
+SECRET=$(aws secretsmanager get-secret-value --secret-id "$DB_SECRET_ID" --query SecretString --output text)
 
 export PGHOST=$(jq -r .host <<<"$SECRET")
 export PGPORT=$(jq -r .port <<<"$SECRET")
