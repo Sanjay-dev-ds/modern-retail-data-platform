@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 
 import psycopg
 
+from retail_gen.entities.common import new_uuid
 from retail_gen.entities.customers import customer_change
 from retail_gen.entities.stores import ONLINE_STORE_ID, store_change
 from retail_gen.entities.transactions import Sale
@@ -56,27 +57,28 @@ def reference_ids(conn: psycopg.Connection) -> tuple[list[int], list[int]]:
 
 # ---------------------------------------------------------------- changes (CDC updates/deletes)
 
-def void_recent(conn: psycopg.Connection, n: int, now: datetime) -> int:
-    """Cashier voids: completed sales from the last hour become 'voided'."""
+def void_recent(conn: psycopg.Connection, n: int, now: datetime) -> list:
+    """Cashier voids: completed sales from the last hour become 'voided'. Returns their ids."""
     if n <= 0:
-        return 0
-    return conn.execute(
+        return []
+    return [r[0] for r in conn.execute(
         """
         UPDATE pos.transactions SET status = 'voided', updated_at = %(now)s
         WHERE transaction_id IN (
           SELECT transaction_id FROM pos.transactions
           WHERE status = 'completed' AND txn_ts > %(now)s - interval '1 hour'
           ORDER BY random() LIMIT %(n)s)
+        RETURNING transaction_id
         """,
         {"now": now, "n": n},
-    ).rowcount
+    )]
 
 
-def return_older(conn: psycopg.Connection, n: int, now: datetime) -> int:
-    """Customer returns: completed sales from 1-30 days ago become 'returned'."""
+def return_older(conn: psycopg.Connection, n: int, now: datetime) -> list:
+    """Customer returns: completed sales from 1-30 days ago become 'returned'. Returns their ids."""
     if n <= 0:
-        return 0
-    return conn.execute(
+        return []
+    return [r[0] for r in conn.execute(
         """
         UPDATE pos.transactions SET status = 'returned', updated_at = %(now)s
         WHERE transaction_id IN (
@@ -84,8 +86,25 @@ def return_older(conn: psycopg.Connection, n: int, now: datetime) -> int:
           WHERE status = 'completed'
             AND txn_ts BETWEEN %(now)s - interval '30 days' AND %(now)s - interval '1 day'
           ORDER BY random() LIMIT %(n)s)
+        RETURNING transaction_id
         """,
         {"now": now, "n": n},
+    )]
+
+
+def refund_payments(conn: psycopg.Connection, transaction_ids: list, now: datetime) -> int:
+    """Refund voided/returned sales: one negative payment per original tender (same method),
+    so a split-tender sale gets two refund rows. Inserts -> DMS Op = I on pos.payments."""
+    if not transaction_ids:
+        return 0
+    return conn.execute(
+        """
+        INSERT INTO pos.payments (payment_id, transaction_id, method, amount, created_at)
+        SELECT gen_random_uuid(), transaction_id, method, -amount, %(now)s
+        FROM pos.payments
+        WHERE transaction_id = ANY(%(ids)s) AND amount > 0
+        """,
+        {"ids": transaction_ids, "now": now},
     ).rowcount
 
 
@@ -137,14 +156,19 @@ def _update(conn: psycopg.Connection, table: str, key: str, key_value, changes: 
 
 
 def backdate_status(rng: random.Random, sale: Sale, void_rate: float, return_rate: float, now: datetime) -> None:
-    """History rows: apply the void/return the sale would have had by now."""
+    """History rows: apply the void/return (and its refund) the sale would have had by now."""
     ts = sale.txn["txn_ts"]
     r = rng.random()
     if r < void_rate:
+        changed_at = ts + timedelta(minutes=rng.uniform(1, 15))
         sale.txn["status"] = "voided"
-        sale.txn["updated_at"] = ts + timedelta(minutes=rng.uniform(1, 15))
-    elif r < void_rate + return_rate:
-        returned_at = ts + timedelta(days=rng.uniform(1, 10))
-        if returned_at < now:
-            sale.txn["status"] = "returned"
-            sale.txn["updated_at"] = returned_at
+    elif r < void_rate + return_rate and ts + timedelta(days=10) < now:
+        changed_at = ts + timedelta(days=rng.uniform(1, 10))
+        sale.txn["status"] = "returned"
+    else:
+        return
+    sale.txn["updated_at"] = changed_at
+    sale.payments += [
+        {**p, "payment_id": new_uuid(rng), "amount": -p["amount"], "created_at": changed_at}
+        for p in sale.payments
+    ]

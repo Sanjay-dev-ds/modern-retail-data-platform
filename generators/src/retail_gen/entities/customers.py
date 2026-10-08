@@ -11,6 +11,30 @@ TIERS = ["bronze", "silver", "gold"]
 TIER_WEIGHTS = [0.7, 0.22, 0.08]
 
 
+def new_customer(
+    rng: random.Random,
+    fake: Faker,
+    customer_id: int,
+    home_store_ids: list[int],
+    signup_at: datetime,
+    null_rate: float,
+    tier: str | None = None,
+) -> dict:
+    first, last = fake.first_name(), fake.last_name()
+    email = f"{first}.{last}{customer_id}@example.com".lower()
+    if rng.random() < null_rate:
+        email = None  # defect: sign-up without email
+    return {
+        "customer_id": customer_id,
+        "email": email,
+        "phone": f"+1-555-{rng.randint(100, 999)}-{rng.randint(1000, 9999)}",
+        "loyalty_tier": tier or rng.choices(TIERS, TIER_WEIGHTS)[0],
+        "home_store_id": rng.choice(home_store_ids),
+        "signup_at": signup_at,
+        "updated_at": signup_at,
+    }
+
+
 def make_customers(
     rng: random.Random,
     fake: Faker,
@@ -19,21 +43,13 @@ def make_customers(
     signup_before: datetime,
     null_rate: float,
 ) -> list[dict]:
+    """Seed: n existing members who signed up over the two years before the history starts."""
     customers = []
     for customer_id in range(1, n + 1):
-        first, last = fake.first_name(), fake.last_name()
-        email = f"{first}.{last}{customer_id}@example.com".lower()
-        if rng.random() < null_rate:
-            email = None  # defect: sign-up without email
-        customers.append({
-            "customer_id": customer_id,
-            "email": email,
-            "phone": f"+1-555-{rng.randint(100, 999)}-{rng.randint(1000, 9999)}",
-            "loyalty_tier": rng.choices(TIERS, TIER_WEIGHTS)[0],
-            "home_store_id": rng.choice(home_store_ids),
-            "signup_at": signup_before - timedelta(days=rng.uniform(1, 730)),
-            "updated_at": signup_before,
-        })
+        c = new_customer(rng, fake, customer_id, home_store_ids,
+                         signup_before - timedelta(days=rng.uniform(1, 730)), null_rate)
+        c["updated_at"] = signup_before
+        customers.append(c)
     return customers
 
 

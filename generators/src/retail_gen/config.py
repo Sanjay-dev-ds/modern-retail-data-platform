@@ -35,6 +35,8 @@ class Mutations:
     delete_rate: float
     tier_change_rate: float
     store_change_rate: float
+    new_customers_per_day: float = 0.0
+    new_stores_per_day: float = 0.0
 
 
 @dataclass(frozen=True)

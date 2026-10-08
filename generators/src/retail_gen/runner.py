@@ -1,7 +1,8 @@
 """Orchestration of the three sources.
 
 seed : 30 days of backdated POS history + one catalog snapshot per history day (no clickstream).
-run  : live loop. Every cycle: new sales, CDC changes (voids, returns, deletes, SCD2 updates),
+run  : live loop. Every cycle: store openings, sign-ups and sales, CDC changes (voids and returns
+       with refunds, deletes, SCD2 updates),
        clickstream sessions to Kinesis, and today's catalog snapshot once per day.
 """
 
@@ -20,8 +21,8 @@ from retail_gen.config import Config
 from retail_gen.entities.catalog import SkuPicker, evolve_catalog, initial_catalog
 from retail_gen.entities.clickstream import browse_session, purchase_session
 from retail_gen.entities.common import ONLINE_HOURLY, STORE_HOURLY, WEEKDAY_FACTOR, poisson
-from retail_gen.entities.customers import make_customers
-from retail_gen.entities.stores import ONLINE_STORE_ID, make_stores
+from retail_gen.entities.customers import make_customers, new_customer
+from retail_gen.entities.stores import ONLINE_STORE_ID, make_stores, new_store
 from retail_gen.entities.transactions import Sale, make_sale
 from retail_gen.sources import catalog_feed, clickstream_feed, pos
 from retail_gen.writers.events import EventSink
@@ -139,7 +140,7 @@ def _todays_picker(cfg: Config, sinks: Sinks, rng: random.Random, now: datetime)
     return SkuPicker(products)
 
 
-def _cycle(cfg, sinks, conn, rng, picker, store_ids, customer_ids, now) -> dict:
+def _cycle(cfg, sinks, conn, rng, fake, picker, store_ids, customer_ids, now) -> dict:
     cycle_s = cfg.targets.incremental_cycle_seconds
     day_fraction = cycle_s / 86400
     per_day = cfg.scale.transactions_per_day * WEEKDAY_FACTOR[now.weekday()]
@@ -148,19 +149,41 @@ def _cycle(cfg, sinks, conn, rng, picker, store_ids, customer_ids, now) -> dict:
     expected_sales = per_day * day_fraction * (w_store + w_online)
     p_online = w_online / (w_store + w_online) if (w_store + w_online) else 1.0
 
-    # 1. New sales
+    m = cfg.mutations
+
+    # 1. New store openings and loyalty sign-ups (inserts), usable by sales in this same cycle.
+    openings = [
+        new_store(rng, fake, store_ids[-1] + i + 1, now.date(), now)
+        for i in range(poisson(rng, m.new_stores_per_day * day_fraction))
+    ]
+    pos.insert_rows(conn, "pos.stores", openings)
+    store_ids.extend(st["store_id"] for st in openings)
+
+    signups = [
+        new_customer(rng, fake, customer_ids[-1] + i + 1, store_ids,
+                     now - timedelta(seconds=rng.uniform(0, cycle_s)), cfg.defects.null_values, tier="bronze")
+        for i in range(poisson(rng, m.new_customers_per_day * day_fraction))
+    ]
+    pos.insert_rows(conn, "pos.customers", signups)
+    customer_ids.extend(c["customer_id"] for c in signups)
+
+    # 2. New sales
     sales = []
     for _ in range(poisson(rng, expected_sales)):
         ts = now - timedelta(seconds=rng.uniform(0, cycle_s))
         sales.append(_sale(rng, cfg, picker, ts, rng.random() < p_online, store_ids, customer_ids))
     pos.insert_sales(conn, sales)
 
-    # 2. Changes to existing rows (DMS turns these into Op = U / D)
-    m = cfg.mutations
+    # 3. Changes to existing rows (DMS turns these into Op = U / D), refunds as new payments
+    voided = pos.void_recent(conn, poisson(rng, m.void_rate * expected_sales), now)
+    returned = pos.return_older(conn, poisson(rng, m.return_rate * expected_sales), now)
     stats = {
+        "new_stores": len(openings),
+        "new_customers": len(signups),
         "sales": len(sales),
-        "voids": pos.void_recent(conn, poisson(rng, m.void_rate * expected_sales), now),
-        "returns": pos.return_older(conn, poisson(rng, m.return_rate * expected_sales), now),
+        "voids": len(voided),
+        "returns": len(returned),
+        "refunds": pos.refund_payments(conn, voided + returned, now),
         "deletes": pos.delete_test_transactions(conn, poisson(rng, m.delete_rate * expected_sales)),
         "store_changes": pos.change_stores(
             conn, rng, poisson(rng, m.store_change_rate * len(store_ids) * day_fraction), now),
@@ -169,7 +192,7 @@ def _cycle(cfg, sinks, conn, rng, picker, store_ids, customer_ids, now) -> dict:
     }
     conn.commit()  # orders exist before their purchase events are sent
 
-    # 3. Clickstream: a purchase session per online sale, browse sessions for the rest of the budget
+    # 4. Clickstream: a purchase session per online sale, browse sessions for the rest of the budget
     events = [e for s in sales if s.txn["channel"] == "online" for e in purchase_session(rng, s, picker)]
     budget = cfg.targets.clickstream_events_per_second * cycle_s - len(events)
     late = 0
@@ -189,6 +212,7 @@ def _cycle(cfg, sinks, conn, rng, picker, store_ids, customer_ids, now) -> dict:
 
 def run(cfg: Config, sinks: Sinks, once: bool = False) -> None:
     rng = random.Random()  # live data does not need to be reproducible
+    fake = Faker()
     cycle_s = cfg.targets.incremental_cycle_seconds
     with connect(sinks.db_secret_id) as conn:
         if not pos.is_seeded(conn):
@@ -201,7 +225,7 @@ def run(cfg: Config, sinks: Sinks, once: bool = False) -> None:
             now = datetime.now(UTC)
             if picker_day != now.date():
                 picker, picker_day = _todays_picker(cfg, sinks, rng, now), now.date()
-            stats = _cycle(cfg, sinks, conn, rng, picker, store_ids, customer_ids, now)
+            stats = _cycle(cfg, sinks, conn, rng, fake, picker, store_ids, customer_ids, now)
             log.info("cycle: %s", " ".join(f"{k}={v}" for k, v in stats.items()))
             if once:
                 return

@@ -114,7 +114,9 @@ models:
                 field: store_sk
 
   - name: fct_payments
-    description: Payment fact, grain = one tender. Never join to fct_sales_lines (fan-out).
+    description: >
+      Payment fact, grain = one tender. Refunds for voided/returned sales are negative rows
+      (is_refund), one per original tender. Never join to fct_sales_lines (fan-out).
     columns:
       - name: payment_id
         data_tests: [unique, not_null]

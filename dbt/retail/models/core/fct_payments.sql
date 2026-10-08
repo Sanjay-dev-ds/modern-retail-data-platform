@@ -7,8 +7,9 @@
     )
 }}
 
--- Payment fact. Grain: one tender. Kept separate from fct_sales_lines: joining payments to
--- lines fans out (a 3-line sale paid in 2 tenders would become 6 rows and double count).
+-- Payment fact. Grain: one tender, including refunds (negative amounts written when a sale is
+-- voided or returned). Kept separate from fct_sales_lines: joining payments to lines fans out
+-- (a 3-line sale paid in 2 tenders would become 6 rows and double count).
 
 with payments as (
     select * from {{ ref('stg_pos__payments') }}
@@ -22,7 +23,8 @@ select
     p.payment_id,
     p.transaction_id,
     p.method,
-    p.amount,
+    p.amount,                                       -- negative = refund (void / return)
+    p.amount < 0                                    as is_refund,
     h.total_amount                                  as transaction_total,
     h.txn_ts,
     h.txn_ts::date                                  as txn_date,

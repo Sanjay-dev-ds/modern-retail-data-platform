@@ -29,8 +29,8 @@ DDL: [`sql/pos/01_schema.sql`](../sql/pos/01_schema.sql). There are 30 days of b
 | `stores` | one store | `store_id` | `store_id = 0` is "Online". `format`/`region` change rarely (SCD2). |
 | `customers` | one loyalty customer | `customer_id` | `loyalty_tier` changes (SCD2). `email`/`phone` are PII. Anonymous shoppers have no row. |
 | `transactions` | one sale (header) | `transaction_id` | `channel = online` ⇔ `store_id = 0`. `customer_id` null = anonymous. |
-| `transaction_lines` | one product on one sale | `transaction_id, line_no` | **Sales fact grain.** `sku` has no FK because it comes from the catalog. |
-| `payments` | one tender | `payment_id` | About 5% of sales have more than one payment. **Never join to lines** (fan-out). |
+| `transaction_lines` | one product on one sale | `transaction_id, line_no` | **Sales fact grain.** `sku` has no FK because it comes from the catalog. Lines never change after the sale (as in a real POS); they're only deleted with their transaction. |
+| `payments` | one tender | `payment_id` | About 5% of sales have more than one payment. A void or return adds one **negative** (refund) row per original tender. **Never join to lines** (fan-out). |
 
 ### Column dictionary
 
@@ -53,10 +53,12 @@ DDL: [`sql/pos/01_schema.sql`](../sql/pos/01_schema.sql). There are 30 days of b
 | Change | Table | When | In S3 |
 |---|---|---|---|
 | New sale | transactions, lines, payments | continuously | `Op = I` |
-| Void | transactions.status | minutes after the sale (1%) | `Op = U` |
-| Return | transactions.status | days after the sale (2%) | `Op = U` |
+| Loyalty sign-up | customers (new member, bronze tier) | ~50 per day | `Op = I` |
+| Void | transactions.status, plus refund rows in payments | minutes after the sale (1%) | `Op = U` (header), `Op = I` (refunds) |
+| Return | transactions.status, plus refund rows in payments | days after the sale (2%) | `Op = U` (header), `Op = I` (refunds) |
 | Tier change / email fix | customers | daily, a few rows | `Op = U` |
-| Format / region change | stores | rare | `Op = U` |
+| Store opening | stores | ~1 per 10 days | `Op = I` |
+| Format / region change | stores | ~1 per 2 days | `Op = U` |
 | Test-transaction cleanup | transactions (+ its lines and payments) | rare (0.05%) | `Op = D` |
 
 **DMS specifics:**
@@ -133,7 +135,7 @@ The generator corrupts a small, configurable share of records. Each defect has a
 | Null values | 0.5% | `customers.email`; `transactions.customer_id` on online orders | `not_null` where the business requires it |
 | Invalid values | 0.5% | `transaction_lines.quantity <= 0` or `unit_price = 0` on completed sales | range / expression tests |
 | Orphan SKU | 0.3% | `transaction_lines.sku` not in the catalog | `relationships` test (warn) |
-| Payment mismatch | 0.2% | Σ `payments.amount` ≠ `transactions.total_amount` | reconciliation test |
+| Payment mismatch | 0.2% | Σ `payments.amount` ≠ `total_amount` (completed) or ≠ 0 (voided/returned, after refunds) | reconciliation test |
 | CDC noise | n/a | several changes per key in a batch; key-only delete rows | latest-by-`_dms_commit_ts` dedupe, delete flag |
 | Schema drift | once | catalog `pack_size` column | explicit column list, schema test |
 

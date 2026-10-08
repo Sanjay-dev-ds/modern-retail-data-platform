@@ -12,6 +12,18 @@ REGIONS = ["north", "south", "east", "west"]
 FORMATS = ["hyper", "express", "outlet"]
 
 
+def new_store(rng: random.Random, fake: Faker, store_id: int, open_date: date, now: datetime) -> dict:
+    fmt = rng.choice(FORMATS)
+    return {
+        "store_id": store_id,
+        "store_name": f"{fake.city()} {fmt.title()}",
+        "region": rng.choice(REGIONS),
+        "format": fmt,
+        "open_date": open_date,
+        "updated_at": now,
+    }
+
+
 def make_stores(rng: random.Random, fake: Faker, n: int, now: datetime) -> list[dict]:
     online = {
         "store_id": ONLINE_STORE_ID,
@@ -21,18 +33,10 @@ def make_stores(rng: random.Random, fake: Faker, n: int, now: datetime) -> list[
         "open_date": date(2018, 1, 1),
         "updated_at": now,
     }
-    stores = [online]
-    for store_id in range(1, n + 1):
-        fmt = rng.choice(FORMATS)
-        stores.append({
-            "store_id": store_id,
-            "store_name": f"{fake.city()} {fmt.title()}",
-            "region": rng.choice(REGIONS),
-            "format": fmt,
-            "open_date": (now - timedelta(days=rng.randint(365, 365 * 15))).date(),
-            "updated_at": now,
-        })
-    return stores
+    return [online] + [
+        new_store(rng, fake, store_id, (now - timedelta(days=rng.randint(365, 365 * 15))).date(), now)
+        for store_id in range(1, n + 1)
+    ]
 
 
 def store_change(rng: random.Random) -> dict:

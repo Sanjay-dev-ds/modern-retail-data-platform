@@ -18,11 +18,13 @@ mix:
 
 # Share of new transactions later updated or deleted (DMS CDC updates/deletes)
 mutations:
-  void_rate: 0.01               # status -> voided, within minutes
-  return_rate: 0.02             # status -> returned, days later
+  void_rate: 0.01               # status -> voided, within minutes (+ refund payments)
+  return_rate: 0.02             # status -> returned, days later (+ refund payments)
   delete_rate: 0.0005           # hard delete (test transactions) -> Op = 'D'
   tier_change_rate: 0.002       # customers per day whose loyalty_tier changes (SCD2)
-  store_change_rate: 0.01       # stores per day whose format/region changes (SCD2)
+  store_change_rate: 0.05       # share of stores per day whose format/region changes (SCD2), ~1 per 2 days
+  new_customers_per_day: 50     # loyalty sign-ups (inserts into pos.customers; new SCD2 rows)
+  new_stores_per_day: 0.1       # store openings (inserts into pos.stores), ~1 per 10 days
 
 catalog:                        # daily full snapshot CSV
   price_change_rate: 0.02       # SKUs per day with a new list_price
