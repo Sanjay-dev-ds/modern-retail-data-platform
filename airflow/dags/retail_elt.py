@@ -19,7 +19,7 @@ SNOWFLAKE_CONN = "snowflake_default"
 DBT_PROJECT = "/opt/airflow/dbt/retail"
 DBT_EXECUTABLE = "/home/airflow/dbt_venv/bin/dbt"
 
-# DMS writes pos/pos/<table>/ (full load) and pos/pos/<table>/YYYYMMDD/ (CDC); pos_stage points
+# DMS writes pos/pos/<table>/ (full load) and pos/pos/<table>/YYYY/MM/DD/ (CDC); pos_stage points
 # at pos/pos/, so each table's prefix picks up both. Parquet/JSON rows land whole as VARIANT.
 POS_TABLES = ["stores", "customers", "transactions", "transaction_lines", "payments"]
 COPY_VARIANT = """

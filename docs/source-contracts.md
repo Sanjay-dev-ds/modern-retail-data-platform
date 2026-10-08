@@ -6,7 +6,7 @@ All sources land in one bucket, `modern-retail-data-platform-20261007`. The same
 
 | # | Source | Business role | Mechanism | S3 location | Format |
 |---|---|---|---|---|---|
-| A | POS / orders DB (RDS PostgreSQL, schema `pos`) | System of record for store and online sales | DMS full load + CDC | `pos/pos/<table>/` (CDC files under `YYYYMMDD/`) | Parquet + `Op`, `_dms_commit_ts` |
+| A | POS / orders DB (RDS PostgreSQL, schema `pos`) | System of record for store and online sales | DMS full load + CDC | `pos/pos/<table>/` (CDC files under `YYYY/MM/DD/`) | Parquet + `Op`, `_dms_commit_ts` |
 | B | Web/app clickstream | Shopper behaviour | Kinesis Data Streams → Firehose | `clickstream/events/dt=YYYY-MM-DD/hh=HH/` | JSON Lines, gzip |
 | C | Product catalog (third-party supplier feed) | Product reference data | Daily file upload | `catalog/products/dt=YYYY-MM-DD/` | CSV, full snapshot |
 
@@ -52,17 +52,17 @@ DDL: [`sql/pos/01_schema.sql`](../sql/pos/01_schema.sql). There are 30 days of b
 
 | Change | Table | When | In S3 |
 |---|---|---|---|
-| New sale | transactions, lines, payments | continuously | `Op = I` |
-| Loyalty sign-up | customers (new member, bronze tier) | ~50 per day | `Op = I` |
+| New sale | transactions, lines, payments | continuously, ~10,000 per day | `Op = I` |
+| Loyalty sign-up | customers (new member, bronze tier) | ~500 per day (~20/hour) | `Op = I` |
 | Void | transactions.status, plus refund rows in payments | minutes after the sale (1%) | `Op = U` (header), `Op = I` (refunds) |
 | Return | transactions.status, plus refund rows in payments | days after the sale (2%) | `Op = U` (header), `Op = I` (refunds) |
-| Tier change / email fix | customers | daily, a few rows | `Op = U` |
-| Store opening | stores | ~1 per 10 days | `Op = I` |
-| Format / region change | stores | ~1 per 2 days | `Op = U` |
+| Tier change / email fix | customers | ~100 per day | `Op = U` |
+| Store opening | stores | ~1 per day | `Op = I` |
+| Format / region change | stores | ~5 per day | `Op = U` |
 | Test-transaction cleanup | transactions (+ its lines and payments) | rare (0.05%) | `Op = D` |
 
 **DMS specifics:**
-- Full-load files (`LOAD*.parquet`) sit directly in the table folder. CDC files sit under `YYYYMMDD/`.
+- Full-load files (`LOAD*.parquet`) sit directly in the table folder. CDC files sit under `YYYY/MM/DD/`.
 - `_dms_commit_ts` is the source commit time. Use it to keep the latest version of each key, because a single CDC batch can contain several changes to the same row.
 - With the `test_decoding` plugin, **delete rows (`Op = D`) carry only the primary-key columns**. Every other column is null.
 
@@ -109,7 +109,7 @@ A full snapshot every day: `catalog/products/dt=YYYY-MM-DD/products_<yyyymmddHHM
 | `is_active` | boolean | false once discontinued (the row stays in later files) |
 | `supplier_updated_at` | timestamp | when the supplier last changed the row |
 
-**Daily changes:** about 2% of SKUs get a new price, ~3 new SKUs appear, and ~0.2% are discontinued. Changes are only visible by comparing consecutive snapshots, which makes this the SCD2 snapshot source.
+**Daily changes:** about 5% of SKUs get a new price, ~10 new SKUs appear, and ~0.2% are discontinued. Changes are only visible by comparing consecutive snapshots, which makes this the SCD2 snapshot source.
 
 **Schema drift:** from `schema_drift_day` onward, the file gains a `pack_size` column. The file is the supplier's format, and they don't announce changes.
 

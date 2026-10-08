@@ -1,14 +1,15 @@
 # Synthetic source data settings. Contract: docs/source-contracts.md
 seed: 42
 
-# Minimum scale: big enough to show grain, SCD2 and CDC behaviour, small enough for
-# db.t4g.small and a cheap Snowflake warehouse (~45k transactions, ~135k lines of history).
+# Scale: every hourly Snowflake load brings changes for every entity (~400 sales, ~20 sign-ups,
+# store/tier changes, refunds), still well within db.t4g.small, dms.t3.small and an XSMALL
+# warehouse. transactions_per_day also sizes the seed: a fresh seed is ~300k sales of history.
 scale:
   stores: 10                    # physical stores; store_id 0 = Online is always added
   skus: 500
   customers: 5000
   history_days: 30              # backdated POS history (clickstream has no history: live only)
-  transactions_per_day: 1500
+  transactions_per_day: 10000   # ~7 per 30 s cycle in the daytime
   avg_lines_per_transaction: 3
 
 mix:
@@ -21,20 +22,20 @@ mutations:
   void_rate: 0.01               # status -> voided, within minutes (+ refund payments)
   return_rate: 0.02             # status -> returned, days later (+ refund payments)
   delete_rate: 0.0005           # hard delete (test transactions) -> Op = 'D'
-  tier_change_rate: 0.002       # customers per day whose loyalty_tier changes (SCD2)
-  store_change_rate: 0.05       # share of stores per day whose format/region changes (SCD2), ~1 per 2 days
-  new_customers_per_day: 50     # loyalty sign-ups (inserts into pos.customers; new SCD2 rows)
-  new_stores_per_day: 0.1       # store openings (inserts into pos.stores), ~1 per 10 days
+  tier_change_rate: 0.02        # share of customers per day with a tier change / email fix (~100/day)
+  store_change_rate: 0.5        # share of stores per day whose format/region changes (~5/day)
+  new_customers_per_day: 5000    # loyalty sign-ups (~20/hour; new SCD2 rows)
+  new_stores_per_day: 100      # store openings (~1/day)
 
 catalog:                        # daily full snapshot CSV
-  price_change_rate: 0.02       # SKUs per day with a new list_price
-  new_skus_per_day: 3
+  price_change_rate: 0.05       # share of SKUs per day with a new list_price
+  new_skus_per_day: 10
   discontinue_rate: 0.002       # SKUs per day set is_active = false
 
 # Fraction of records affected by each injected defect
 defects:
-  duplicate_events: 0.01        # clickstream: same event_id sent twice
-  late_arriving: 0.02           # clickstream: event_ts hours older than arrival
+  duplicate_events: 0.1        # clickstream: same event_id sent twice
+  late_arriving: 0.2           # clickstream: event_ts hours older than arrival
   null_values: 0.005            # customers.email, transactions.customer_id on online orders
   invalid_values: 0.005         # quantity <= 0 or unit_price = 0 on completed sales
   orphan_sku: 0.003             # transaction_lines.sku not in the catalog

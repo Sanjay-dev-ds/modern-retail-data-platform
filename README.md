@@ -76,7 +76,7 @@ The log should end with `[setup] done`. If it doesn't, run `/usr/local/sbin/setu
 bash scripts/init_db.sh
 ```
 
-**3. Seed 30 days of history** (once, before DMS starts; takes 2–3 minutes). This loads stores, customers, about 47k transactions with their lines and payments, and one catalog snapshot per day:
+**3. Seed 30 days of history** (once, before DMS starts). This loads stores, customers, 30 days of sales (about 300k at the default `transactions_per_day` of 10,000) with their lines and payments, and one catalog snapshot per day. It takes a few minutes:
 
 ```bash
 cd /opt/retail/generators
@@ -91,7 +91,7 @@ aws dms describe-table-statistics --replication-task-arn "$DMS_TASK_ARN" \
   --query 'TableStatistics[].[TableName,FullLoadRows,Inserts,Updates,Deletes]' --output table
 ```
 
-**5. Try one live cycle**: about 30 seconds of new sales, CDC changes and roughly 150 clickstream events:
+**5. Try one live cycle**: 30 seconds of activity. In the daytime that's about 7 sales, plus sign-ups, CDC changes and about 150 clickstream events:
 
 ```bash
 uv run retail-gen run --once
