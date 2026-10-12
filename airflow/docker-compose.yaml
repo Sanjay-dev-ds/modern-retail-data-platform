@@ -34,7 +34,7 @@ x-airflow-common: &airflow-common
     # Platform values as Airflow Variables: Variable.get("raw_bucket"), ...
     AIRFLOW_VAR_RAW_BUCKET: ${RAW_BUCKET}
     AIRFLOW_VAR_KINESIS_STREAM: ${KINESIS_STREAM}
-    AIRFLOW_VAR_DMS_REPLICATION_CONFIG_ARN: ${DMS_REPLICATION_CONFIG_ARN}
+    AIRFLOW_VAR_DMS_TASK_ARN: ${DMS_TASK_ARN}
     AIRFLOW_VAR_GLUE_CRAWLER: ${GLUE_CRAWLER}
   volumes:
     - ./dags:/opt/airflow/dags

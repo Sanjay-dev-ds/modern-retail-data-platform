@@ -25,3 +25,6 @@ tfplan
 
 # macOS
 .DS_Store
+
+# dbt local user id (written by dbt next to profiles.yml)
+.user.yml

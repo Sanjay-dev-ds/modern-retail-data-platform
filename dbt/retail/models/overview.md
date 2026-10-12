@@ -7,7 +7,7 @@ Cosmos) models them into staging, core and marts.
 
 | Source | System | Path to Snowflake |
 |---|---|---|
-| POS database (`pos` schema) | RDS PostgreSQL | DMS Serverless (CDC) → S3 Parquet → `RAW.POS_*` |
+| POS database (`pos` schema) | RDS PostgreSQL | DMS task (CDC) → S3 Parquet → `RAW.POS_*` |
 | Clickstream | Web / app events | Kinesis → Firehose → S3 JSON → `RAW.CLICKSTREAM_EVENTS` |
 | Product catalog | Supplier file | Daily CSV snapshot → S3 → `RAW.CATALOG_PRODUCTS` |
 

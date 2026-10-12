@@ -1,14 +1,23 @@
 region      = "us-east-1"
 environment = "dev"
 
-# Set false to remove the DMS replication instance when not replicating (saves cost)
+# DMS replication instance + task (CDC only). false removes them; `make dms-stop` only pauses the
+# task (the instance keeps billing, ~$26/month for dms.t3.small).
 enable_dms = true
+# dms_instance_class = "dms.t3.small"
 
-# Platform host (Airflow + generators). t3.medium is ~$30/month while running.
+# Platform host (Airflow in Docker + the generator)
 # ec2_instance_type = "t3.medium"
 # airflow_version   = "3.3.2"
-# repo_url          = "https://github.com/<you>/modern-retail-data-platform.git"
+# repo_url          = "https://github.com/<you>/modern-retail-data-platform.git"   # must be public
+# repo_branch       = "main"
 
-# Budget alerts (empty disables)
+# Budget alerts (empty email disables the budget)
 # alert_email        = "you@example.com"
 # monthly_budget_usd = 50
+
+# Snowflake. Fill in after running the setup script in Snowsight (README "Set up Snowflake"):
+#   account from Snowsight (Account > View account details), the other two from DESC INTEGRATION S3_RAW_INT.
+# snowflake_account      = "ORGNAME-ACCOUNTNAME"
+# snowflake_iam_user_arn = "arn:aws:iam::123456789012:user/abcd-s-v2st0000"
+# snowflake_external_id  = "ABC12345_SFCRole=..."

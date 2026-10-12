@@ -99,12 +99,12 @@ data "aws_iam_policy_document" "platform" {
   statement {
     sid = "DmsOperate"
     actions = [
-      "dms:DescribeReplicationConfigs",
-      "dms:DescribeReplications",
-      "dms:DescribeReplicationTableStatistics",
+      "dms:DescribeReplicationTasks",
+      "dms:DescribeTableStatistics",
+      "dms:DescribeReplicationInstances",
       "dms:DescribeEndpoints",
-      "dms:StartReplication",
-      "dms:StopReplication",
+      "dms:StartReplicationTask",
+      "dms:StopReplicationTask",
     ]
     resources = ["*"]
   }

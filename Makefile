@@ -22,24 +22,24 @@ tf-apply:
 tf-destroy:
 	terraform -chdir=$(TF_DIR) destroy
 
-# DMS Serverless, CDC only. First start: AFTER sql/pos/01_schema.sql and BEFORE the seed load,
+# DMS task, CDC only. First start: AFTER sql/pos/01_schema.sql and BEFORE the seed load,
 # so the seeded history is captured as CDC inserts.
 dms-start:
-	aws dms start-replication --replication-config-arn $$($(TF_OUT) dms_replication_config_arn) --start-replication-type start-replication
+	aws dms start-replication-task --replication-task-arn $$($(TF_OUT) dms_task_arn) --start-replication-task-type start-replication
 
 # Continue from where it stopped (no changes are lost while stopped, within WAL retention)
 dms-resume:
-	aws dms start-replication --replication-config-arn $$($(TF_OUT) dms_replication_config_arn) --start-replication-type resume-processing
+	aws dms start-replication-task --replication-task-arn $$($(TF_OUT) dms_task_arn) --start-replication-task-type resume-processing
 
 dms-stop:
-	aws dms stop-replication --replication-config-arn $$($(TF_OUT) dms_replication_config_arn)
+	aws dms stop-replication-task --replication-task-arn $$($(TF_OUT) dms_task_arn)
 
-# Replication state and per-table change counts
+# Task status and per-table change counts
 dms-status:
-	aws dms describe-replications --filters Name=replication-config-arn,Values=$$($(TF_OUT) dms_replication_config_arn) \
-	  --query 'Replications[0].[Status,ReplicationType,StopReason]' --output text
-	aws dms describe-replication-table-statistics --replication-config-arn $$($(TF_OUT) dms_replication_config_arn) \
-	  --query 'ReplicationTableStatistics[].[TableName,Inserts,Updates,Deletes,TableState]' --output table
+	aws dms describe-replication-tasks --filters Name=replication-task-arn,Values=$$($(TF_OUT) dms_task_arn) \
+	  --query 'ReplicationTasks[0].[Status,MigrationType,StopReason]' --output text
+	aws dms describe-table-statistics --replication-task-arn $$($(TF_OUT) dms_task_arn) \
+	  --query 'TableStatistics[].[TableName,Inserts,Updates,Deletes,TableState]' --output table
 
 # Shell on the platform host (generator commands: see README)
 ssm:

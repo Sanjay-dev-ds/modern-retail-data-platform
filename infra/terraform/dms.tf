@@ -1,8 +1,7 @@
-# DMS Serverless, CDC only: stream POS changes from RDS to s3://<bucket>/pos/<schema>/<table>/
-# as Parquet. No replication instance to size: capacity (DCUs) scales between the min and max
-# below. CDC only = no full load, so start the replication BEFORE seeding the database; the seed
-# then reaches S3 as CDC inserts. Terraform never starts it: `make dms-start`.
-# DMS creates its service-linked role (AWSServiceRoleForDMSServerless) on the first start.
+# DMS (replication instance + task), CDC only: stream POS changes from RDS to
+# s3://<bucket>/pos/<schema>/<table>/ as Parquet. CDC only = no full load, so start the task
+# BEFORE seeding the database; the seed then reaches S3 as CDC inserts.
+# Terraform never starts the task: `make dms-start`.
 
 resource "aws_dms_replication_subnet_group" "this" {
   count = var.enable_dms ? 1 : 0
@@ -54,14 +53,28 @@ resource "aws_dms_s3_endpoint" "target" {
   depends_on = [aws_iam_role_policy.platform]
 }
 
-resource "aws_dms_replication_config" "pos" {
+resource "aws_dms_replication_instance" "this" {
   count = var.enable_dms ? 1 : 0
 
-  replication_config_identifier = "${local.prefix}-pos-cdc"
-  replication_type              = "cdc"
-  source_endpoint_arn           = aws_dms_endpoint.source[0].endpoint_arn
-  target_endpoint_arn           = aws_dms_s3_endpoint.target[0].endpoint_arn
-  start_replication             = false
+  replication_instance_id     = "${local.prefix}-dms"
+  replication_instance_class  = var.dms_instance_class
+  allocated_storage           = 20
+  replication_subnet_group_id = aws_dms_replication_subnet_group.this[0].id
+  vpc_security_group_ids      = [aws_security_group.this.id]
+  publicly_accessible         = false
+  multi_az                    = false
+  apply_immediately           = true
+}
+
+resource "aws_dms_replication_task" "pos" {
+  count = var.enable_dms ? 1 : 0
+
+  replication_task_id      = "${local.prefix}-pos-cdc"
+  migration_type           = "cdc"
+  replication_instance_arn = aws_dms_replication_instance.this[0].replication_instance_arn
+  source_endpoint_arn      = aws_dms_endpoint.source[0].endpoint_arn
+  target_endpoint_arn      = aws_dms_s3_endpoint.target[0].endpoint_arn
+  start_replication_task   = false
 
   table_mappings = jsonencode({
     rules = [{
@@ -73,17 +86,9 @@ resource "aws_dms_replication_config" "pos" {
     }]
   })
 
-  # CloudWatch logging stays off (it needs another AWS-named role). Check progress with
-  # `aws dms describe-replications` / `describe-replication-table-statistics`.
-  replication_settings = jsonencode({
+  # CloudWatch logging stays off (it needs another AWS-named role, dms-cloudwatch-logs-role).
+  # Check progress with `make dms-status` (task status + per-table statistics).
+  replication_task_settings = jsonencode({
     Logging = { EnableLogging = false }
   })
-
-  compute_config {
-    replication_subnet_group_id = aws_dms_replication_subnet_group.this[0].replication_subnet_group_id
-    vpc_security_group_ids      = [aws_security_group.this.id]
-    min_capacity_units          = var.dms_min_capacity_units
-    max_capacity_units          = var.dms_max_capacity_units
-    multi_az                    = false
-  }
 }
