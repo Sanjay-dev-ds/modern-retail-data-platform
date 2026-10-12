@@ -39,6 +39,8 @@ hourly by Airflow, and is modelled with dbt into a documented, tested star schem
          terraform/  (Terraform state, reserved)                           MARTS    (BI tables)
 ```
 
+**Full diagram:** [`docs/architecture.drawio`](docs/architecture.drawio), with official AWS icons and three pages: (1) architecture and numbered data flow, (2) the ELT layers and dbt model lineage, (3) the CORE star schema with grain and keys. Open it at [app.diagrams.net](https://app.diagrams.net) (File → Open from → Device) or with the draw.io extension in VS Code / Cursor. To embed it, export a page as PNG or SVG.
+
 - **Infrastructure:** Terraform ([`infra/terraform`](infra/terraform)), one flat root with one file per concern.
 - **Orchestration:** one Airflow DAG, [`retail_elt`](airflow/dags/retail_elt.py), runs hourly. It loads RAW, then runs dbt through **Cosmos**, so every dbt model and its tests appear as separate Airflow tasks.
 - **Access:** nothing is publicly reachable. The EC2 host, the Airflow UI, the dbt docs and RDS are all reached through **AWS SSM** (Session Manager).
@@ -156,6 +158,8 @@ The EC2 host then sets itself up (about 5 minutes): it installs Docker, clones t
    make tf-apply
    ```
 
+> Whenever Terraform re-creates the Snowflake key pair (for example after `make tf-destroy` and a redeploy), Snowflake must be given the new public key, or every Snowflake task fails with `JWT token is invalid`. See [Snowflake key after a rebuild](#snowflake-key-after-a-rebuild).
+
 ### 6.4 Bring up the sources (on the EC2 host)
 1. **Open a shell on the host.** Use `make ssm`, or in the AWS console go to EC2 → `retail-data-platform-dev-platform` → Connect → Session Manager. Then switch to root:
    ```bash
@@ -247,6 +251,41 @@ make rds-credentials
 ```
 In DBeaver, create a **PostgreSQL** connection to `localhost:15432`, database `retail`, user `retail_admin`, with the password printed above. On the Driver properties tab, set `sslmode` = `require`. Edits are real source changes: DMS replicates them, and they reach Snowflake on the next `retail_elt` run. To hard-delete a sale, delete its `payments` and `transaction_lines` rows before the `transactions` row.
 
+### Snowflake key after a rebuild
+
+**Why:** Airflow and local dbt log in to Snowflake as `RETAIL_SVC` with **key-pair authentication**. Terraform generates the key pair (`tls_private_key.snowflake` in [`snowflake.tf`](infra/terraform/snowflake.tf)):
+- the **private key** goes into Secrets Manager (`<prefix>/airflow/connections/snowflake_default`), where Airflow reads it on every run;
+- the **public key** must be registered on the Snowflake user (`RSA_PUBLIC_KEY`). Snowflake checks every login against it.
+
+**When:** whenever Terraform re-creates the key, for example after `make tf-destroy` and a redeploy, or after a partial destroy. AWS then holds a new private key while Snowflake still has the old public key, and every Snowflake task fails with:
+```
+390144 (28000): Failed to connect to DB: <account>.snowflakecomputing.com:443. JWT token is invalid.
+```
+The account and the storage integration don't change, so the values in `terraform.tfvars` stay valid. Only the key needs updating.
+
+**Fix:**
+1. On your laptop, copy the statement that registers the current public key:
+   ```bash
+   terraform -chdir=infra/terraform output -raw snowflake_setup_sql | grep "RSA_PUBLIC_KEY" | pbcopy
+   ```
+   The clipboard now holds `ALTER USER RETAIL_SVC SET RSA_PUBLIC_KEY = 'MIIB…';`.
+2. In a Snowsight worksheet, run it as ACCOUNTADMIN:
+   ```sql
+   USE ROLE ACCOUNTADMIN;
+   -- paste the copied ALTER USER … line here
+   ```
+   Re-running the whole setup script (6.3 steps 1–2) does the same, because it's safe to re-run.
+3. In Airflow, clear the failed tasks or trigger `retail_elt` again. Nothing needs restarting, because Airflow reads the key from Secrets Manager on every run.
+
+**Check that the keys match** (optional). In Snowsight:
+```sql
+DESC USER RETAIL_SVC;   -- RSA_PUBLIC_KEY_FP = SHA256:<fingerprint>
+```
+On your laptop, compute the fingerprint of the key Terraform holds; it must equal the part after `SHA256:`:
+```bash
+terraform -chdir=infra/terraform output -raw snowflake_setup_sql | grep -o "RSA_PUBLIC_KEY = '[^']*'" | cut -d"'" -f2 | base64 -d | openssl dgst -sha256 -binary | openssl enc -base64
+```
+
 ### dbt docs (on the host)
 On the host, as root (leave it running):
 ```bash
@@ -316,7 +355,7 @@ Run dbt from your laptop against Snowflake, with the same project and the same `
 make tf-destroy
 ```
 This removes everything Terraform created, including RDS with no final snapshot. The bucket (landing data and state) and Snowflake survive. After a redeploy:
-- Re-run the Snowflake setup script (6.3 steps 1–2). The new stack has a new key pair; the integration values in `terraform.tfvars` stay valid.
+- Register the new Snowflake key ([Snowflake key after a rebuild](#snowflake-key-after-a-rebuild)). The new stack has a new key pair; the integration values in `terraform.tfvars` stay valid.
 - Bring the sources up again (6.4).
 - For a clean slate, first empty the landing prefixes, then drop `RETAIL` in Snowflake:
   ```bash
@@ -336,7 +375,7 @@ A monthly AWS budget alert (`alert_email`, `monthly_budget_usd`) emails at 80 % 
 | DAG doesn't appear in Airflow | The changes aren't pushed and pulled (`git push`, then `git -C /opt/retail pull`), or there's a DAG import error. Look at the banner in the UI, or run `docker compose logs airflow-dag-processor`. |
 | `compose build requires buildx` | Re-run `/usr/local/sbin/setup_host.sh`, which installs buildx. |
 | Snowflake `404 Not Found … login-request` | `snowflake_account` must be `ORGNAME-ACCOUNTNAME`, not a bare locator. Fix it in tfvars and apply. |
-| `JWT token is invalid` | `RSA_PUBLIC_KEY` doesn't match the key in Secrets Manager (for example, after a rebuild). Re-run the Snowflake setup script. |
+| `JWT token is invalid` | Snowflake has an old public key: the key pair was re-created by a rebuild. Register the new one; see [Snowflake key after a rebuild](#snowflake-key-after-a-rebuild). |
 | `File format 'PARQUET_FMT' does not exist` | The stages were created by an old version of the script. Re-run the current setup script; it replaces the stages. |
 | `Unit retail-gen.service was already loaded` | `systemctl stop retail-gen; systemctl reset-failed retail-gen`, then start it again. |
 | `CLICKSTREAM_EVENTS` is empty | Clickstream is live-only. Start the generator (6.4 step 5). |
