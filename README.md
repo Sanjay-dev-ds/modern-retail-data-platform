@@ -4,6 +4,10 @@ An end-to-end analytics engineering project. A synthetic retailer (physical stor
 shop) produces data in real AWS source systems. The data lands in S3, is loaded into Snowflake
 hourly by Airflow, and is modelled with dbt into a documented, tested star schema.
 
+![Architecture overview: retail-gen → RDS/DMS, Kinesis/Firehose and a daily catalog file → Amazon S3 → Snowflake (RAW → STAGING → CORE → MARTS) → dashboards, orchestrated hourly by Airflow with dbt via Cosmos](docs/architecture.png)
+
+*Overview of the platform. The detailed architecture, the dbt model lineage and the star schema are in [`docs/architecture.drawio`](docs/architecture.drawio) (open it at [app.diagrams.net](https://app.diagrams.net)).*
+
 **Contents**
 1. [Architecture](#1-architecture)
 2. [Data sources](#2-data-sources)
@@ -39,7 +43,7 @@ hourly by Airflow, and is modelled with dbt into a documented, tested star schem
          terraform/  (Terraform state, reserved)                           MARTS    (BI tables)
 ```
 
-**Full diagram:** [`docs/architecture.drawio`](docs/architecture.drawio), with official AWS icons and three pages: (1) architecture and numbered data flow, (2) the ELT layers and dbt model lineage, (3) the CORE star schema with grain and keys. Open it at [app.diagrams.net](https://app.diagrams.net) (File → Open from → Device) or with the draw.io extension in VS Code / Cursor. To embed it, export a page as PNG or SVG.
+**Full diagram:** [`docs/architecture.drawio`](docs/architecture.drawio), with official AWS icons and four pages: (1) a **simple overview** (generate → capture → land → transform → use), (2) the detailed architecture with the numbered data flow, (3) the ELT layers and dbt model lineage, (4) the CORE star schema with grain and keys. Open it at [app.diagrams.net](https://app.diagrams.net) (File → Open from → Device) or with the draw.io extension in VS Code / Cursor. To embed it, export a page as PNG or SVG.
 
 - **Infrastructure:** Terraform ([`infra/terraform`](infra/terraform)), one flat root with one file per concern.
 - **Orchestration:** one Airflow DAG, [`retail_elt`](airflow/dags/retail_elt.py), runs hourly. It loads RAW, then runs dbt through **Cosmos**, so every dbt model and its tests appear as separate Airflow tasks.
@@ -77,6 +81,12 @@ Project: [`dbt/retail`](dbt/retail). Every model and column is documented (grain
 | `fct_sessions` | browsing session |
 | `mart_daily_sales` | day × store × channel |
 | `mart_web_funnel` | day |
+
+**Dimensional model (CORE star schema):**
+
+![CORE star schema: fct_sales_lines at the centre, joined one-to-many to dim_date, dim_customer, dim_product and dim_store; fct_payments and fct_sessions link to sales through transaction_id / order_id](docs/star_schema.png)
+
+*`fct_sales_lines` (one row per product on a sale) joins each dimension through its surrogate key: the dimension is the "one" side, the fact the "many" side. Dashed lines are degenerate keys, not joins: `fct_sessions.order_id` = `transaction_id` for online orders, and `fct_payments` must not be joined to sales lines (fan-out). Editable source: page 4 of [`docs/architecture.drawio`](docs/architecture.drawio).*
 
 **Modelling conventions:**
 - **Surrogate keys (Kimball):** `*_sk` are meaningless sequential integers, assigned once per dimension version and never changed ([`macros/surrogate_key.sql`](dbt/retail/macros/surrogate_key.sql)). `-1` is the **Unknown** member, so fact keys are never null. `date_sk` is a `YYYYMMDD` integer.
