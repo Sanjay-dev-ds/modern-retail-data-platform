@@ -2,7 +2,7 @@
 seed: 42
 
 # Scale: every hourly Snowflake load brings changes for every entity (~400 sales, ~20 sign-ups,
-# store/tier changes, refunds), still well within db.t4g.small, dms.t3.small and an XSMALL
+# store/tier changes, refunds), still well within db.t4g.small, 1-2 DMS Serverless DCUs and an XSMALL
 # warehouse. transactions_per_day also sizes the seed: a fresh seed is ~300k sales of history.
 scale:
   stores: 10                    # physical stores; store_id 0 = Online is always added

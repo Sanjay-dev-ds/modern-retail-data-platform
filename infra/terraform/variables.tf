@@ -35,10 +35,16 @@ variable "enable_dms" {
   default     = true
 }
 
-variable "dms_instance_class" {
-  description = "Smallest orderable class in us-east-1 (dms.t3.micro is no longer offered). Check with: aws dms describe-orderable-replication-instances"
-  type        = string
-  default     = "dms.t3.small"
+variable "dms_min_capacity_units" {
+  description = "DMS Serverless minimum capacity (DCU; 1 DCU = 2 GB RAM, ~$0.082/hour in us-east-1). Runs whenever CDC runs."
+  type        = number
+  default     = 1
+}
+
+variable "dms_max_capacity_units" {
+  description = "DMS Serverless maximum capacity (DCU) it may scale up to under load"
+  type        = number
+  default     = 2
 }
 
 variable "ec2_instance_type" {

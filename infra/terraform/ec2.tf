@@ -11,16 +11,16 @@ locals {
   # init_db.sh, retail-gen and Airflow's docker compose. Only DB credentials live in Secrets
   # Manager (DB_SECRET_ID points at them).
   host_env = {
-    AWS_DEFAULT_REGION = var.region
-    RAW_BUCKET         = var.bucket_name
-    KINESIS_STREAM     = aws_kinesis_stream.clickstream.name
-    DMS_TASK_ARN       = try(aws_dms_replication_task.pos[0].replication_task_arn, "")
-    GLUE_CRAWLER       = aws_glue_crawler.raw.name
-    DB_SECRET_ID       = aws_secretsmanager_secret.db.name
-    SECRETS_PREFIX     = "${local.prefix}/airflow"
-    REPO_URL           = var.repo_url
-    REPO_BRANCH        = var.repo_branch
-    AIRFLOW_VERSION    = var.airflow_version
+    AWS_DEFAULT_REGION         = var.region
+    RAW_BUCKET                 = var.bucket_name
+    KINESIS_STREAM             = aws_kinesis_stream.clickstream.name
+    DMS_REPLICATION_CONFIG_ARN = try(aws_dms_replication_config.pos[0].arn, "")
+    GLUE_CRAWLER               = aws_glue_crawler.raw.name
+    DB_SECRET_ID               = aws_secretsmanager_secret.db.name
+    SECRETS_PREFIX             = "${local.prefix}/airflow"
+    REPO_URL                   = var.repo_url
+    REPO_BRANCH                = var.repo_branch
+    AIRFLOW_VERSION            = var.airflow_version
   }
 
   user_data = <<-EOT

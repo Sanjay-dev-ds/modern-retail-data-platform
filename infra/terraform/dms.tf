@@ -1,5 +1,8 @@
-# DMS: POS full load + CDC from RDS to s3://<bucket>/pos/<schema>/<table>/ as Parquet.
-# The task is never started by Terraform: create the schema and seed data first, then `make dms-start`.
+# DMS Serverless, CDC only: stream POS changes from RDS to s3://<bucket>/pos/<schema>/<table>/
+# as Parquet. No replication instance to size: capacity (DCUs) scales between the min and max
+# below. CDC only = no full load, so start the replication BEFORE seeding the database; the seed
+# then reaches S3 as CDC inserts. Terraform never starts it: `make dms-start`.
+# DMS creates its service-linked role (AWSServiceRoleForDMSServerless) on the first start.
 
 resource "aws_dms_replication_subnet_group" "this" {
   count = var.enable_dms ? 1 : 0
@@ -9,19 +12,6 @@ resource "aws_dms_replication_subnet_group" "this" {
   subnet_ids                           = aws_subnet.private[*].id
 
   depends_on = [aws_iam_role_policy_attachment.dms_vpc]
-}
-
-resource "aws_dms_replication_instance" "this" {
-  count = var.enable_dms ? 1 : 0
-
-  replication_instance_id     = "${local.prefix}-dms"
-  replication_instance_class  = var.dms_instance_class
-  allocated_storage           = 20
-  replication_subnet_group_id = aws_dms_replication_subnet_group.this[0].id
-  vpc_security_group_ids      = [aws_security_group.this.id]
-  publicly_accessible         = false
-  multi_az                    = false
-  apply_immediately           = true
 }
 
 resource "aws_dms_endpoint" "source" {
@@ -52,28 +42,26 @@ resource "aws_dms_s3_endpoint" "target" {
   service_access_role_arn = aws_iam_role.platform.arn
   encryption_mode         = "SSE_S3"
 
-  data_format              = "parquet"
-  parquet_version          = "parquet-2-0"
-  compression_type         = "GZIP"
-  timestamp_column_name    = "_dms_commit_ts"
-  include_op_for_full_load = true
-  date_partition_enabled   = true
-  date_partition_sequence  = "YYYYMMDD"
-  cdc_max_batch_interval   = 60
-  cdc_min_file_size        = 32000
+  data_format             = "parquet"
+  parquet_version         = "parquet-2-0"
+  compression_type        = "GZIP"
+  timestamp_column_name   = "_dms_commit_ts"
+  date_partition_enabled  = true
+  date_partition_sequence = "YYYYMMDD"
+  cdc_max_batch_interval  = 60
+  cdc_min_file_size       = 32000
 
   depends_on = [aws_iam_role_policy.platform]
 }
 
-resource "aws_dms_replication_task" "pos" {
+resource "aws_dms_replication_config" "pos" {
   count = var.enable_dms ? 1 : 0
 
-  replication_task_id      = "${local.prefix}-pos-cdc"
-  migration_type           = "full-load-and-cdc"
-  replication_instance_arn = aws_dms_replication_instance.this[0].replication_instance_arn
-  source_endpoint_arn      = aws_dms_endpoint.source[0].endpoint_arn
-  target_endpoint_arn      = aws_dms_s3_endpoint.target[0].endpoint_arn
-  start_replication_task   = false
+  replication_config_identifier = "${local.prefix}-pos-cdc"
+  replication_type              = "cdc"
+  source_endpoint_arn           = aws_dms_endpoint.source[0].endpoint_arn
+  target_endpoint_arn           = aws_dms_s3_endpoint.target[0].endpoint_arn
+  start_replication             = false
 
   table_mappings = jsonencode({
     rules = [{
@@ -85,9 +73,17 @@ resource "aws_dms_replication_task" "pos" {
     }]
   })
 
-  # CloudWatch logging is off: it would need a second AWS-named role (dms-cloudwatch-logs-role).
-  # Check progress with `aws dms describe-table-statistics` instead.
-  replication_task_settings = jsonencode({
+  # CloudWatch logging stays off (it needs another AWS-named role). Check progress with
+  # `aws dms describe-replications` / `describe-replication-table-statistics`.
+  replication_settings = jsonencode({
     Logging = { EnableLogging = false }
   })
+
+  compute_config {
+    replication_subnet_group_id = aws_dms_replication_subnet_group.this[0].replication_subnet_group_id
+    vpc_security_group_ids      = [aws_security_group.this.id]
+    min_capacity_units          = var.dms_min_capacity_units
+    max_capacity_units          = var.dms_max_capacity_units
+    multi_az                    = false
+  }
 }

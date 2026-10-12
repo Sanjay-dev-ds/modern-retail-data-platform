@@ -22,8 +22,9 @@ output "firehose_stream" {
   value = aws_kinesis_firehose_delivery_stream.clickstream.name
 }
 
-output "dms_task_arn" {
-  value = try(aws_dms_replication_task.pos[0].replication_task_arn, null)
+output "dms_replication_config_arn" {
+  description = "DMS Serverless replication (CDC only). Start with: make dms-start"
+  value       = try(aws_dms_replication_config.pos[0].arn, null)
 }
 
 output "glue_crawler" {

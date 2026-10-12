@@ -35,7 +35,7 @@ if [[ ! -f /swapfile ]]; then
   echo "/swapfile none swap defaults 0 0" >> /etc/fstab
 fi
 
-# Convenience for interactive shells ($RAW_BUCKET, $DMS_TASK_ARN in README commands).
+# Convenience for interactive shells ($RAW_BUCKET, $DMS_REPLICATION_CONFIG_ARN in README commands).
 # The tools read $PLATFORM_ENV themselves.
 echo "set -a; . $PLATFORM_ENV; set +a" > /etc/profile.d/retail.sh
 

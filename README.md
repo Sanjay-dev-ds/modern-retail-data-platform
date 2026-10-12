@@ -23,7 +23,7 @@ Synthetic retail data flowing through real AWS source services into S3, then Sno
 | `iam.tf` | **One service role**, `<prefix>-platform`, used by EC2, DMS, Firehose and Glue. Also `dms-vpc-role`, a role name AWS requires for DMS. |
 | `s3.tf` | Lifecycle rules and an HTTPS-only policy on the existing shared bucket |
 | `rds.tf` | POS PostgreSQL 16 with logical replication, plus connection secrets |
-| `dms.tf` | Replication instance, endpoints and a full-load + CDC task to `pos/` (toggle with `enable_dms`) |
+| `dms.tf` | **DMS Serverless**, CDC only: endpoints and a replication config streaming `pos.*` changes to `pos/` (scales 1–2 DCU; toggle with `enable_dms`) |
 | `streaming.tf` | Kinesis stream to Firehose, writing to `clickstream/events/` |
 | `glue.tf` | Glue database and crawler for Athena validation |
 | `ec2.tf` | **One EC2 host** (`t3.medium`) running Airflow (Docker) and the generator |
@@ -53,7 +53,7 @@ On first boot, user_data runs [`scripts/setup_host.sh`](scripts/setup_host.sh). 
 
 - **Airflow** runs as containers defined in [`airflow/docker-compose.yaml`](airflow/docker-compose.yaml): Airflow 3.3.2 (LocalExecutor) with a Postgres metadata DB. DAGs are read from `/opt/retail/airflow/dags`. Containers use the EC2 instance role, and connections come from Secrets Manager under `<prefix>/airflow/connections/` (`pos_db` is created by Terraform).
 - **The generator** runs directly on the host with `uv run`.
-- **Settings:** Terraform writes the non-secret values (bucket, Kinesis stream, DMS task, DB secret name, repo URL) to `/etc/retail/platform.env`. `setup_host.sh`, `init_db.sh`, `retail-gen` and Airflow's `.env` read this file directly, so no shell variables are needed. Login shells also load it, for `$RAW_BUCKET`, `$DMS_TASK_ARN`, ...
+- **Settings:** Terraform writes the non-secret values (bucket, Kinesis stream, DMS replication config, DB secret name, repo URL) to `/etc/retail/platform.env`. `setup_host.sh`, `init_db.sh`, `retail-gen` and Airflow's `.env` read this file directly, so no shell variables are needed. Login shells also load it, for `$RAW_BUCKET`, `$DMS_REPLICATION_CONFIG_ARN`, ...
 - **Secrets:** only the POS database credentials are in Secrets Manager. The Airflow keys and its metadata DB password are fixed, public values in `airflow/docker-compose.yaml`; that's deliberate for this experimental project.
 
 ## Run the generator on EC2
@@ -76,19 +76,22 @@ The log should end with `[setup] done`. If it doesn't, run `/usr/local/sbin/setu
 bash scripts/init_db.sh
 ```
 
-**3. Seed 30 days of history** (once, before DMS starts). This loads stores, customers, 30 days of sales (about 300k at the default `transactions_per_day` of 10,000) with their lines and payments, and one catalog snapshot per day. It takes a few minutes:
+**3. Start DMS** (Serverless, CDC only) **before seeding**. CDC only captures changes made after it starts, and there's no full load, so the seed must happen while it's running. The first start provisions capacity and takes about 10–15 minutes:
+
+```bash
+aws dms start-replication --replication-config-arn "$DMS_REPLICATION_CONFIG_ARN" --start-replication-type start-replication
+```
+Wait until the status is `running` (re-run until it is):
+```bash
+aws dms describe-replications --filters Name=replication-config-arn,Values="$DMS_REPLICATION_CONFIG_ARN" --query 'Replications[0].Status' --output text
+```
+From your laptop, `make dms-status` shows the same, plus per-table insert/update/delete counts.
+
+**4. Seed 30 days of history.** This loads stores, customers, 30 days of sales (about 300k at the default `transactions_per_day` of 10,000) with their lines and payments, and one catalog snapshot per day. It takes a few minutes, and DMS streams every inserted row to S3 as CDC:
 
 ```bash
 cd /opt/retail/generators
 uv run retail-gen seed
-```
-
-**4. Start DMS** (full load, then CDC), and check progress:
-
-```bash
-aws dms start-replication-task --replication-task-arn "$DMS_TASK_ARN" --start-replication-task-type start-replication
-aws dms describe-table-statistics --replication-task-arn "$DMS_TASK_ARN" \
-  --query 'TableStatistics[].[TableName,FullLoadRows,Inserts,Updates,Deletes]' --output table
 ```
 
 **5. Try one live cycle**: 30 seconds of activity. In the daytime that's about 7 sales, plus sign-ups, CDC changes and about 150 clickstream events:
@@ -117,7 +120,7 @@ aws s3 ls "s3://$RAW_BUCKET/catalog/products/" --recursive | tail
 ```
 
 **Notes:**
-- **Reset before DMS:** `uv run retail-gen seed --force` truncates the POS tables and reloads them. Never do this after DMS has started, because DMS does not replicate `TRUNCATE`.
+- **Re-seeding:** `uv run retail-gen seed --force` truncates the POS tables and reloads them. DMS does not replicate `TRUNCATE`, so Snowflake would keep the old rows next to the new ones. Only re-seed together with a clean S3 `pos/` prefix and empty RAW tables.
 - **Volumes and defect rates** are set in [`generators/config/default.yaml`](generators/config/default.yaml). The data contract is [`docs/source-contracts.md`](docs/source-contracts.md).
 
 ## Connect to the POS database (DBeaver)
@@ -215,7 +218,7 @@ The DAG is [`airflow/dags/retail_elt.py`](airflow/dags/retail_elt.py). The Airfl
 
 ## Cost control
 
-- `enable_dms = false` followed by `make tf-plan tf-apply` removes the replication instance.
+- DMS Serverless bills its capacity (min 1 DCU, about $0.08/hour) while the replication runs: `make dms-stop` / `make dms-resume`. `enable_dms = false` followed by `make tf-plan tf-apply` removes it entirely.
 - `make ec2-stop` / `make ec2-start` stops and starts the platform host.
 - Stop the RDS instance when idle (AWS restarts it automatically after 7 days).
 - `make tf-destroy` removes everything except the shared bucket and its data. Never delete `terraform/` in the bucket.
