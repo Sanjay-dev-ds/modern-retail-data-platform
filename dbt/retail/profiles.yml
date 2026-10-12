@@ -1,6 +1,3 @@
-# For running dbt by hand on the EC2 host (scripts/dbt_docs.sh). Airflow/Cosmos builds its own
-# profile from the snowflake_default connection and ignores this file. No secrets here: the
-# account and private key come from environment variables set from Secrets Manager.
 retail:
   target: dev
   outputs:

@@ -68,7 +68,7 @@ sources:
         description: |
 
           - **Grain:** one row per delivered event. Firehose is at-least-once, so an event can be
-          delivered twice (planted duplicate defect).
+          delivered twice.
           `record` fields: `event_id`, `event_type`, `event_ts`, `session_id`, `anonymous_id`,
           `customer_id`, `page_url`, `sku`, `quantity`, `order_id`, `device`, `utm_source`,
           `utm_medium`, `utm_campaign`, `schema_version`.
