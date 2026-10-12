@@ -16,7 +16,7 @@ Cosmos) models them into staging, core and marts.
 | Layer | Schema | Materialization | Purpose |
 |---|---|---|---|
 | Sources | `RAW` | tables (COPY INTO) | Files as delivered. POS and clickstream rows are whole records in a `record` VARIANT. |
-| Staging | `STAGING` | views | Typed columns, one row per business key (latest CDC version), duplicates removed, `is_deleted` flag. `*_cdc` views keep every version. |
+| Staging | `STAGING` | views | Typed columns, duplicates removed. Each POS table has a `*_cdc` view (every change) and a latest-state view (one row per key); both carry `cdc_operation` (INSERT / UPDATE / DELETE) and `_dms_commit_ts`. |
 | Core | `CORE` | incremental tables | Star schema: SCD2 dimensions with integer surrogate keys, and facts at a stated grain. |
 | Marts | `MARTS` | tables | Aggregates for BI. |
 

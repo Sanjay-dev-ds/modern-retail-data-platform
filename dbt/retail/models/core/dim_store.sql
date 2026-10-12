@@ -25,7 +25,7 @@ versions as (
         *,
         md5(concat_ws('|', store_name, region, format, open_date)) as attr_hash
     from {{ ref('stg_pos__stores_cdc') }}
-    where not is_deleted
+    where cdc_operation <> 'DELETE'
       and store_id in (select store_id from changed_stores)
 ),
 

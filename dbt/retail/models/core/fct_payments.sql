@@ -31,7 +31,8 @@ select
     h.store_id,
     h.channel,
     h.status,
-    coalesce(h.is_deleted, false) or p.is_deleted   as is_deleted,
+    coalesce(h.cdc_operation = 'DELETE', false)
+        or p.cdc_operation = 'DELETE'               as is_deleted,
     greatest(p._loaded_at, coalesce(h._loaded_at, p._loaded_at)) as _loaded_at
 from payments p
 left join headers h on h.transaction_id = p.transaction_id

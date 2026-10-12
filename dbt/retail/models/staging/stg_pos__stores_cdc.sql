@@ -6,8 +6,5 @@ select
     record:"format"::string             as format,
     {{ to_ts('record:"open_date"') }}::date as open_date,
     {{ to_ts('record:"updated_at"') }}  as updated_at,
-    record:"Op"::string = 'D'           as is_deleted,
-    {{ to_ts('record:"_dms_commit_ts"') }} as _dms_commit_ts,
-    _file,
-    _loaded_at
+    {{ cdc_columns() }}
 from {{ source('raw', 'pos_stores') }}

@@ -49,7 +49,8 @@ joined as (
         l.promo_code,
         l.quantity * l.unit_price                   as gross_amount,
         l.quantity * l.unit_price - l.discount_amount as net_amount,
-        coalesce(h.is_deleted, false) or l.is_deleted as is_deleted,
+        coalesce(h.cdc_operation = 'DELETE', false)
+            or l.cdc_operation = 'DELETE'          as is_deleted,
         greatest(l._loaded_at, coalesce(h._loaded_at, l._loaded_at)) as _loaded_at
     from lines l
     left join headers h on h.transaction_id = l.transaction_id

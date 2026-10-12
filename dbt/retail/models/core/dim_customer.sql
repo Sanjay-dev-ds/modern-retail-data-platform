@@ -23,7 +23,7 @@ versions as (
         *,
         md5(concat_ws('|', coalesce(email, ''), coalesce(phone, ''), loyalty_tier, home_store_id)) as attr_hash
     from {{ ref('stg_pos__customers_cdc') }}
-    where not is_deleted
+    where cdc_operation <> 'DELETE'
       and customer_id in (select customer_id from changed_customers)
 ),
 

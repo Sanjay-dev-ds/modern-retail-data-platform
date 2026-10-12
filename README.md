@@ -68,7 +68,7 @@ Project: [`dbt/retail`](dbt/retail). Every model and column is documented (grain
 | Layer | Schema | Models | Notes |
 |---|---|---|---|
 | Sources | `RAW` | 7 tables | Loaded by `COPY INTO`. POS and clickstream rows land whole as `record` VARIANT. |
-| Staging | `STAGING` | `stg_pos__*`, `stg_clickstream__events`, `stg_catalog__products` | Typed columns, latest CDC version per key, duplicates removed, `is_deleted` flag. The `*_cdc` views keep every version. |
+| Staging | `STAGING` | `stg_pos__*` (+ `stg_pos__*_cdc`), `stg_clickstream__events`, `stg_catalog__products` | Typed columns, duplicates removed. **Every POS table has two views:** `stg_pos__<table>_cdc` keeps every change (one row per CDC event), and `stg_pos__<table>` keeps the latest version per key. Both carry `cdc_operation` (`INSERT`/`UPDATE`/`DELETE`) and `_dms_commit_ts`. |
 | Core | `CORE` | `dim_date`, `dim_store`, `dim_customer`, `dim_product`, `fct_sales_lines`, `fct_payments`, `fct_sessions` | Star schema. SCD2 dimensions; incremental facts. |
 | Marts | `MARTS` | `mart_daily_sales`, `mart_web_funnel` | Aggregates for BI. |
 
@@ -91,7 +91,7 @@ Project: [`dbt/retail`](dbt/retail). Every model and column is documented (grain
 **Modelling conventions:**
 - **Surrogate keys (Kimball):** `*_sk` are meaningless sequential integers, assigned once per dimension version and never changed ([`macros/surrogate_key.sql`](dbt/retail/macros/surrogate_key.sql)). `-1` is the **Unknown** member, so fact keys are never null. `date_sk` is a `YYYYMMDD` integer.
 - **SCD2:** `valid_from ≤ t < valid_to` (null = current). Facts carry the key of the version valid at the time of the sale.
-- **CDC handling:** the latest `_dms_commit_ts` wins. Hard deletes are kept with `is_deleted = true`.
+- **CDC handling:** the latest `_dms_commit_ts` wins. Staging marks hard deletes with `cdc_operation = 'DELETE'`; the facts keep them as rows with `is_deleted = true`.
 - **Incremental models** use `_loaded_at` (arrival time) as the watermark, so late data is picked up.
 - **Tests:** keys and relationships are **errors**; planted source defects are **warnings**. Cosmos runs each model's tests right after the model (`buildable` indirect selection, so a test spanning two models runs with the downstream one).
 

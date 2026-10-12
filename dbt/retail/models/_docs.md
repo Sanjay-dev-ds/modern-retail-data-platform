@@ -13,8 +13,8 @@ the latest one is the current state.
 {% enddocs %}
 
 {% docs col_is_deleted %}
-True when the source row was hard-deleted (DMS `Op = 'D'`). Delete rows carry only the key
-columns, all other columns are null. Exclude these rows in reporting.
+True when the sale or payment was hard-deleted in the source (its latest CDC operation is DELETE).
+Delete rows carry only the key columns, all other columns are null. Exclude these rows in reporting.
 {% enddocs %}
 
 {% docs col_version_ts %}
@@ -94,4 +94,11 @@ Tender type: card, cash (stores only), wallet, gift_card.
 
 {% docs col_unit_price %}
 Price charged per unit on the sale. Can differ from the catalog `list_price` of that day.
+{% enddocs %}
+
+
+{% docs col_cdc_operation %}
+CDC operation of this row: `INSERT`, `UPDATE` or `DELETE` (from the DMS `Op` code; full-load rows
+count as INSERT). In a `*_cdc` view every row is one change; in a latest-state view it is the operation
+that produced the current version. A DELETE row carries only the key columns.
 {% enddocs %}

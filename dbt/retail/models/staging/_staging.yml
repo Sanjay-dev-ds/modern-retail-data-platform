@@ -28,8 +28,12 @@ models:
         description: Date the store opened.
       - name: updated_at
         description: Last change in the source system.
-      - name: is_deleted
-        description: "{{ doc('col_is_deleted') }}"
+      - name: cdc_operation
+        description: "{{ doc('col_cdc_operation') }}"
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [INSERT, UPDATE, DELETE]
       - name: _dms_commit_ts
         description: "{{ doc('col__dms_commit_ts') }}"
       - name: _file
@@ -60,8 +64,8 @@ models:
         description: Date the store opened.
       - name: updated_at
         description: Last change in the source system.
-      - name: is_deleted
-        description: "{{ doc('col_is_deleted') }}"
+      - name: cdc_operation
+        description: "{{ doc('col_cdc_operation') }}"
       - name: _dms_commit_ts
         description: "{{ doc('col__dms_commit_ts') }}"
       - name: _file
@@ -95,8 +99,12 @@ models:
         description: When the customer joined the loyalty programme.
       - name: updated_at
         description: Last change in the source system.
-      - name: is_deleted
-        description: "{{ doc('col_is_deleted') }}"
+      - name: cdc_operation
+        description: "{{ doc('col_cdc_operation') }}"
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [INSERT, UPDATE, DELETE]
       - name: _dms_commit_ts
         description: "{{ doc('col__dms_commit_ts') }}"
       - name: _file
@@ -123,7 +131,7 @@ models:
           - not_null:
               config:
                 severity: warn
-                where: "not is_deleted"
+                where: "cdc_operation <> 'DELETE'"
       - name: phone
         description: Customer phone number (PII).
       - name: loyalty_tier
@@ -134,8 +142,8 @@ models:
         description: When the customer joined the loyalty programme.
       - name: updated_at
         description: Last change in the source system.
-      - name: is_deleted
-        description: "{{ doc('col_is_deleted') }}"
+      - name: cdc_operation
+        description: "{{ doc('col_cdc_operation') }}"
       - name: _dms_commit_ts
         description: "{{ doc('col__dms_commit_ts') }}"
       - name: _file
@@ -144,6 +152,47 @@ models:
         description: "{{ doc('col__loaded_at') }}"
 
   # ------------------------------------------------------------------ transactions
+  - name: stg_pos__transactions_cdc
+    description: |
+      Every replicated version of every sale header: the insert, then updates (void / return) and deletes.
+
+      - **Grain:** one row per sale header per CDC event.
+      - **Primary key:** none (the business key repeats once per version).
+      - **Source:** `raw.pos_transactions`. **Used by:** `stg_pos__transactions` (latest state).
+    config:
+      meta: {grain: "sale header x CDC event", primary_key: "none (history)", layer: staging}
+    columns:
+      - name: transaction_id
+        description: "{{ doc('col_transaction_id') }}"
+      - name: store_id
+        description: "{{ doc('col_store_id') }}"
+      - name: customer_id
+        description: "{{ doc('col_customer_id') }} Online orders should always have one (planted defect)."
+      - name: channel
+        description: "{{ doc('col_channel') }}"
+      - name: txn_ts
+        description: "{{ doc('col_txn_ts') }}"
+      - name: status
+        description: "{{ doc('col_status') }}"
+      - name: total_amount
+        description: "Sale total = sum over lines of quantity × unit_price − discount_amount."
+      - name: currency
+        description: "ISO currency code (always USD)."
+      - name: updated_at
+        description: "Last change in the source system (e.g. the void or return time)."
+      - name: cdc_operation
+        description: "{{ doc('col_cdc_operation') }}"
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [INSERT, UPDATE, DELETE]
+      - name: _dms_commit_ts
+        description: "{{ doc('col__dms_commit_ts') }}"
+      - name: _file
+        description: "{{ doc('col__file') }}"
+      - name: _loaded_at
+        description: "{{ doc('col__loaded_at') }}"
+
   - name: stg_pos__transactions
     description: |
       Sale headers, current state. A CDC batch can hold several versions of one sale (insert,
@@ -166,7 +215,7 @@ models:
           - not_null:
               config:
                 severity: warn
-                where: "channel = 'online' and not is_deleted"
+                where: "channel = 'online' and cdc_operation <> 'DELETE'"
       - name: channel
         description: "{{ doc('col_channel') }}"
         data_tests:
@@ -174,7 +223,7 @@ models:
               arguments:
                 values: [store, online]
               config:
-                where: "not is_deleted"
+                where: "cdc_operation <> 'DELETE'"
       - name: txn_ts
         description: "{{ doc('col_txn_ts') }}"
       - name: status
@@ -184,15 +233,52 @@ models:
               arguments:
                 values: [completed, voided, returned]
               config:
-                where: "not is_deleted"
+                where: "cdc_operation <> 'DELETE'"
       - name: total_amount
         description: Sale total = sum over lines of quantity × unit_price − discount_amount.
       - name: currency
         description: ISO currency code (always USD).
       - name: updated_at
         description: Last change in the source system (e.g. the void or return time).
-      - name: is_deleted
-        description: "{{ doc('col_is_deleted') }}"
+      - name: cdc_operation
+        description: "{{ doc('col_cdc_operation') }}"
+      - name: _dms_commit_ts
+        description: "{{ doc('col__dms_commit_ts') }}"
+      - name: _file
+        description: "{{ doc('col__file') }}"
+      - name: _loaded_at
+        description: "{{ doc('col__loaded_at') }}"
+
+  - name: stg_pos__transaction_lines_cdc
+    description: |
+      Every replicated version of every sale line (inserted with the sale, deleted with it).
+
+      - **Grain:** one row per sale line per CDC event.
+      - **Primary key:** none (the business key repeats once per version).
+      - **Source:** `raw.pos_transaction_lines`. **Used by:** `stg_pos__transaction_lines` (latest state).
+    config:
+      meta: {grain: "sale line x CDC event", primary_key: "none (history)", layer: staging}
+    columns:
+      - name: transaction_id
+        description: "{{ doc('col_transaction_id') }}"
+      - name: line_no
+        description: "Line number within the sale, starting at 1."
+      - name: sku
+        description: "{{ doc('col_sku') }}"
+      - name: quantity
+        description: "Units sold. Should be positive; 0 or -1 are planted invalid values."
+      - name: unit_price
+        description: "{{ doc('col_unit_price') }} 0 is a planted invalid value."
+      - name: discount_amount
+        description: "Promotion discount on the whole line (not per unit). 0 without a promotion."
+      - name: promo_code
+        description: "Promotion applied to the line (SAVE10, WEEKEND15, LOYAL20); null if none."
+      - name: cdc_operation
+        description: "{{ doc('col_cdc_operation') }}"
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [INSERT, UPDATE, DELETE]
       - name: _dms_commit_ts
         description: "{{ doc('col__dms_commit_ts') }}"
       - name: _file
@@ -229,15 +315,48 @@ models:
                 expression: "> 0"
               config:
                 severity: warn
-                where: "not is_deleted"
+                where: "cdc_operation <> 'DELETE'"
       - name: unit_price
         description: "{{ doc('col_unit_price') }} 0 is a planted invalid value."
       - name: discount_amount
         description: Promotion discount on the whole line (not per unit). 0 without a promotion.
       - name: promo_code
         description: Promotion applied to the line (SAVE10, WEEKEND15, LOYAL20); null if none.
-      - name: is_deleted
-        description: "{{ doc('col_is_deleted') }}"
+      - name: cdc_operation
+        description: "{{ doc('col_cdc_operation') }}"
+      - name: _dms_commit_ts
+        description: "{{ doc('col__dms_commit_ts') }}"
+      - name: _file
+        description: "{{ doc('col__file') }}"
+      - name: _loaded_at
+        description: "{{ doc('col__loaded_at') }}"
+
+  - name: stg_pos__payments_cdc
+    description: |
+      Every replicated version of every tender, including refunds (negative amounts).
+
+      - **Grain:** one row per payment per CDC event.
+      - **Primary key:** none (the business key repeats once per version).
+      - **Source:** `raw.pos_payments`. **Used by:** `stg_pos__payments` (latest state).
+    config:
+      meta: {grain: "payment x CDC event", primary_key: "none (history)", layer: staging}
+    columns:
+      - name: payment_id
+        description: "Payment identifier, UUID."
+      - name: transaction_id
+        description: "{{ doc('col_transaction_id') }}"
+      - name: method
+        description: "{{ doc('col_payment_method') }}"
+      - name: amount
+        description: "Amount tendered. Negative = refund of a voided or returned sale."
+      - name: created_at
+        description: "When the payment (or refund) was taken."
+      - name: cdc_operation
+        description: "{{ doc('col_cdc_operation') }}"
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [INSERT, UPDATE, DELETE]
       - name: _dms_commit_ts
         description: "{{ doc('col__dms_commit_ts') }}"
       - name: _file
@@ -268,13 +387,13 @@ models:
               arguments:
                 values: [card, cash, wallet, gift_card]
               config:
-                where: "not is_deleted"
+                where: "cdc_operation <> 'DELETE'"
       - name: amount
         description: Amount tendered. Negative = refund of a voided or returned sale.
       - name: created_at
         description: When the payment (or refund) was taken.
-      - name: is_deleted
-        description: "{{ doc('col_is_deleted') }}"
+      - name: cdc_operation
+        description: "{{ doc('col_cdc_operation') }}"
       - name: _dms_commit_ts
         description: "{{ doc('col__dms_commit_ts') }}"
       - name: _file
